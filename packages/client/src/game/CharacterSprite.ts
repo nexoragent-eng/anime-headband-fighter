@@ -215,6 +215,11 @@ export class CharacterSprite {
     this.spine.scale.set(sign * scale, scale);
   }
 
+  /** Returns true if the named attachment exists in the skeleton's default skin. */
+  hasAttachment(name: string): boolean {
+    return this.setupAtt.has(name);
+  }
+
   destroy(): void {
     this.container.destroy({ children: true });
   }

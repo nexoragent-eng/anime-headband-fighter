@@ -9,25 +9,26 @@ import { buyCardForPlayer, getPlayerCardCollection, setActiveCardsForPlayer } fr
 // ── Asset paths (individual PNGs from the source images folder) ─────────────
 const IMG = '/assets/Customizable%202D%20Spine%20Character%20Animation%20Set%202/images/';
 
-interface PartOption { label: string; img: string; value: number | string; }
+// attName: the attachment name in the Spine skeleton — omit for "None" options.
+interface PartOption { label: string; img: string; value: number | string; attName?: string; }
 
-const BODY_OPTIONS: PartOption[] = [1,2,3,4,5,6,7].map(i => ({
-  label: `Outfit ${i}`, img: `${IMG}BodyObject_0${i}.png`, value: i,
+const BODY_OPTIONS: PartOption[] = [1,2,3,4,5,6,7,8].map(i => ({
+  label: `Outfit ${i}`, img: `${IMG}BodyObject_0${i}.png`, value: i, attName: `BodyObject_0${i}`,
 }));
 const HEAD_OPTIONS: PartOption[] = [
   { label: 'None', img: '', value: 0 },
-  ...[1,2,3,4,5].map(i => ({ label: `Head ${i}`, img: `${IMG}HeadObject_0${i}.png`, value: i })),
+  ...[1,2,3,4,5].map(i => ({ label: `Head ${i}`, img: `${IMG}HeadObject_0${i}.png`, value: i, attName: `HeadObject_0${i}` })),
 ];
-const HAIR_OPTIONS: PartOption[] = [1,2,3,4,5].map(i => ({
-  label: `Hair ${i}`, img: `${IMG}hairObject_0${i}.png`, value: i,
+const HAIR_OPTIONS: PartOption[] = [1,2,3,4,5,6].map(i => ({
+  label: `Hair ${i}`, img: `${IMG}hairObject_0${i}.png`, value: i, attName: `hairObject_0${i}`,
 }));
 const HAND_OPTIONS: PartOption[] = [
   { label: 'None', img: '', value: 0 },
-  ...[1,2,3,4,5,6].map(i => ({ label: `Weapon ${i}`, img: `${IMG}HandObject_0${i}.png`, value: i })),
+  ...[1,2,3,4,5,6,7].map(i => ({ label: `Weapon ${i}`, img: `${IMG}HandObject_0${i}.png`, value: i, attName: `HandObject_0${i}` })),
 ];
 const CLOAK_OPTIONS: PartOption[] = [
   { label: 'None', img: '', value: 0 },
-  ...[1,2,3,4].map(i => ({ label: `Cloak ${i}`, img: `${IMG}cloakObject_0${i}.png`, value: i })),
+  ...[1,2,3,4,5].map(i => ({ label: `Cloak ${i}`, img: `${IMG}cloakObject_0${i}.png`, value: i, attName: `cloakObject_0${i}` })),
 ];
 const EYE_OPTIONS: PartOption[] = [
   { label: 'Normal', img: `${IMG}Eye_Basic.png`,  value: 'Basic' },
@@ -110,12 +111,14 @@ export class LockerRoomScene {
     this.previewContainer.y = H * 0.55;
     this.container.addChild(this.previewContainer);
 
-    // Load spine and create preview
+    // Load spine and create preview; rebuild UI once sprite is ready so
+    // hasAttachment() can filter options to what's actually in the skeleton.
     CharacterSprite.preload().then(() => {
       this.previewSprite = CharacterSprite.create(this.looks, 'right');
       this.previewSprite.setScale(0.16);
       this.previewSprite.freeze();
       this.previewContainer.addChild(this.previewSprite.container);
+      this.rebuildUI();
     });
 
     this.uiEl = this.buildUI();
@@ -249,7 +252,12 @@ export class LockerRoomScene {
     const grid = document.createElement('div');
     grid.style.cssText = 'display:grid;grid-template-columns:repeat(auto-fill,minmax(68px,1fr));gap:6px;';
 
-    options.forEach(opt => {
+    // Filter to options that exist in the spine skeleton (attName absent = "None", always shown).
+    const visible = this.previewSprite
+      ? options.filter(o => !o.attName || this.previewSprite!.hasAttachment(o.attName))
+      : options;
+
+    visible.forEach(opt => {
       const btn = document.createElement('button');
       const isActive = opt.value === current;
       btn.style.cssText = [
