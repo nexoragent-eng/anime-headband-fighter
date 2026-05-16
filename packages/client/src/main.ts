@@ -19,48 +19,6 @@ export interface GameContext {
 
 let currentScene: { destroy(): void } | null = null;
 
-async function main() {
-  const app = new Application();
-  await app.init({
-    resizeTo: window,
-    backgroundColor: 0x0a0a1a,
-    antialias: true,
-    resolution: window.devicePixelRatio || 1,
-    autoDensity: true,
-  });
-  document.getElementById('app')!.appendChild(app.canvas);
-
-  // Show loading screen while Spine assets download, then reveal the app
-  await showLoadingScreen();
-
-  const ctx: GameContext = {
-    app,
-    player: null,
-    switchScene: (name, opts) => {
-      currentScene?.destroy();
-      currentScene = null;
-
-      switch (name) {
-        case 'login':
-          currentScene = new LoginScene(ctx);
-          break;
-        case 'hub':
-          currentScene = new HubScene(ctx);
-          break;
-        case 'fight':
-          currentScene = new FightScene(ctx, opts as { roomId?: string; local?: boolean });
-          break;
-        case 'locker':
-          currentScene = new LockerRoomScene(ctx);
-          break;
-      }
-    },
-  };
-
-  if (location.hostname === 'localhost') (window as unknown as Record<string, unknown>).__ahf = ctx;
-  ctx.switchScene('login');
-}
-
 function showLoadingScreen(): Promise<void> {
   return new Promise(resolve => {
     const overlay = document.createElement('div');
@@ -113,11 +71,52 @@ function showLoadingScreen(): Promise<void> {
         }, 420);
       }, 200);
     }).catch(() => {
-      // Spine failed to load — continue anyway (Fighter will use placeholder)
       overlay.remove();
       resolve();
     });
   });
+}
+
+async function main() {
+  const app = new Application();
+  await app.init({
+    resizeTo: window,
+    backgroundColor: 0x0a0a1a,
+    antialias: true,
+    resolution: window.devicePixelRatio || 1,
+    autoDensity: true,
+  });
+  document.getElementById('app')!.appendChild(app.canvas);
+
+  // Show loading screen while Spine assets download, then reveal the app
+  await showLoadingScreen();
+
+  const ctx: GameContext = {
+    app,
+    player: null,
+    switchScene: (name, opts) => {
+      currentScene?.destroy();
+      currentScene = null;
+
+      switch (name) {
+        case 'login':
+          currentScene = new LoginScene(ctx);
+          break;
+        case 'hub':
+          currentScene = new HubScene(ctx);
+          break;
+        case 'fight':
+          currentScene = new FightScene(ctx, opts as { roomId?: string; local?: boolean });
+          break;
+        case 'locker':
+          currentScene = new LockerRoomScene(ctx);
+          break;
+      }
+    },
+  };
+
+  if (location.hostname === 'localhost') (window as unknown as Record<string, unknown>).__ahf = ctx;
+  ctx.switchScene('login');
 }
 
 main().catch(console.error);

@@ -72,8 +72,9 @@ export class CharacterSprite {
       this.setupAtt.set(slot.data.name, slot.data.setupPose.attachment);
     });
 
-    // Spine Y-axis is up; PixiJS Y-axis is down → flip Y
-    spine.scale.set(facing === 'left' ? -SCALE : SCALE, -SCALE);
+    // spine-pixi-v8 outputs vertices already in PixiJS Y-down space — no Y flip needed.
+    // Facing: positive X = character faces right (asset default); negative X = faces left.
+    spine.scale.set(facing === 'left' ? -SCALE : SCALE, SCALE);
     this.container = new Container();
     this.container.addChild(spine);
   }
@@ -135,7 +136,7 @@ export class CharacterSprite {
 
   setScale(scale: number): void {
     const sign = this.spine.scale.x < 0 ? -1 : 1;
-    this.spine.scale.set(sign * scale, -scale);
+    this.spine.scale.set(sign * scale, scale);
   }
 
   destroy(): void {
