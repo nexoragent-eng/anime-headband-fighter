@@ -73,8 +73,8 @@ export class CharacterSprite {
     });
 
     // spine-pixi-v8 outputs vertices already in PixiJS Y-down space — no Y flip needed.
-    // Facing: positive X = character faces right (asset default); negative X = faces left.
-    spine.scale.set(facing === 'left' ? -SCALE : SCALE, SCALE);
+    // This asset faces LEFT by default; flip X to make it face right.
+    spine.scale.set(facing === 'left' ? SCALE : -SCALE, SCALE);
     this.container = new Container();
     this.container.addChild(spine);
   }
@@ -131,7 +131,7 @@ export class CharacterSprite {
 
   setFacing(facing: 'left' | 'right'): void {
     const s = Math.abs(this.spine.scale.x);
-    this.spine.scale.x = facing === 'left' ? -s : s;
+    this.spine.scale.x = facing === 'left' ? s : -s;
   }
 
   setScale(scale: number): void {
