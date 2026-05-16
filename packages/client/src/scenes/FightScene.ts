@@ -541,6 +541,15 @@ export class FightScene {
     };
   }
 
+  // Dodge direction: follow held movement key, else dodge away from opponent.
+  private getDodgeDir(key: FighterKey): -1 | 1 {
+    const moveDir = key === 'p1' ? this.p1MoveDir : this.p2MoveDir;
+    if (moveDir !== 0) return moveDir as -1 | 1;
+    const selfX = key === 'p1' ? this.p1Fighter.container.x : this.p2Fighter.container.x;
+    const oppX  = key === 'p1' ? this.p2Fighter.container.x : this.p1Fighter.container.x;
+    return selfX < oppX ? -1 : 1; // default: away from opponent
+  }
+
   // Direction the NPC (p2) should step this frame.
   private calcNpcMoveDir(): -1 | 0 | 1 {
     const dx   = this.p2Fighter.container.x - this.p1Fighter.container.x;
@@ -729,16 +738,23 @@ export class FightScene {
     }
 
     if (move === MoveType.DODGE) {
-      state.isDodging = true;
-      state.dodgeUntil = Date.now() + DODGE_IFRAME_MS;
       runtime.dodgeCooldownUntil = now + DODGE_COOLDOWN_MS;
-      fighter.container.x += key === 'p1' ? -34 : 34;
-      this.after(timing.activeMs, () => {
+      const dodgeDir = this.getDodgeDir(key);
+      // i-frames start at the active frame (after windup), not immediately
+      this.after(timing.windupMs, () => {
+        if (this.destroyed || this.phase !== 'fighting') return;
+        state.isDodging = true;
+        state.dodgeUntil = Date.now() + DODGE_IFRAME_MS;
+        fighter.container.x = Math.max(this.arenaLeft, Math.min(this.arenaRight,
+          fighter.container.x + dodgeDir * 80,
+        ));
+      });
+      this.after(timing.windupMs + timing.activeMs, () => {
         state.isDodging = false;
         if ((fighter.animState === AnimState.BLOCK || fighter.animState === AnimState.DODGE) && state.hp > 0)
           fighter.animState = AnimState.IDLE;
       });
-      this.scheduleAnimReset(key, state, fighter, timing.activeMs + timing.recoveryMs);
+      this.scheduleAnimReset(key, state, fighter, timing.windupMs + timing.activeMs + timing.recoveryMs);
       return;
     }
 

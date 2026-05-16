@@ -57,13 +57,13 @@ export const MOVE_TIMINGS: Record<MoveType, MoveTiming> = {
     note: 'Timed guard. Perfect block window is short; three blocked hits breaks guard.',
   },
   [MoveType.DODGE]: {
-    windupMs: 0,
-    activeMs: 120,
-    recoveryMs: 380,
+    windupMs: 50,   // startup: readable, baitable
+    activeMs: 120,  // i-frame window
+    recoveryMs: 200,// shorter recovery (cooldown still 500ms)
     rangePx: 0,
     hitStunMs: 0,
     missRecoveryMult: 1,
-    note: 'Dodge: short invulnerability, long cooldown/recovery. Baitable.',
+    note: 'Dodge: 50ms startup, 120ms i-frames, 80px displacement. Directional.',
   },
   [MoveType.HEAVY_ATTACK]: {
     windupMs: 220,
