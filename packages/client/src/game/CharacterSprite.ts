@@ -50,14 +50,50 @@ const LOOPING = new Set([AnimState.IDLE, AnimState.BLOCK, AnimState.BANKAI]);
 // so their setup-pose defaults don't bleed through.
 
 const ROOT_EQUIP_SLOTS = [
-  'BodyObject_01','BodyObject_02','BodyObject_03','BodyObject_04','BodyObject_05','BodyObject_06','BodyObject_07',
-  'cloakObject_01','cloakObject_02','cloakObject_03','cloakObject_04',
-  'hairObject_01','hairObject_02','hairObject_03','hairObject_04','hairObject_05',
-  'HeadObject_01','HeadObject_02','HeadObject_03','HeadObject_04','HeadObject_05',
-  'HandObject_01','HandObject_02','HandObject_03','HandObject_04','HandObject_05','HandObject_06',
+  'BodyObject_01',
+  'BodyObject_02',
+  'BodyObject_03',
+  'BodyObject_04',
+  'BodyObject_05',
+  'BodyObject_06',
+  'BodyObject_07',
+  'BodyObject_08',
+
+  'cloakObject_01',
+  'cloakObject_02',
+  'cloakObject_03',
+  'cloakObject_04',
+  'cloakObject_05',
+
+  'hairObject_01',
+  'hairObject_02',
+  'hairObject_03',
+  'hairObject_04',
+  'hairObject_05',
+  'hairObject_06',
+
+  'HeadObject_01',
+  'HeadObject_02',
+  'HeadObject_03',
+  'HeadObject_04',
+  'HeadObject_05',
+
+  'HandObject_01',
+  'HandObject_02',
+  'HandObject_03',
+  'HandObject_04',
+  'HandObject_05',
+  'HandObject_06',
+  'HandObject_07',
+
   'SupportObject_02',
-  'Eye_Basic','Eye_laugh','Eye_Anger',
-  'makeup_01','makeup_02',
+
+  'Eye_Basic',
+  'Eye_laugh',
+  'Eye_Anger',
+
+  'makeup_01',
+  'makeup_02',
 ];
 
 const SCALE = 0.085;
