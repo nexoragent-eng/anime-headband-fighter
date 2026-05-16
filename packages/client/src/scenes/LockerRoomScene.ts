@@ -1,5 +1,6 @@
 import { Container, Graphics, Text, TextStyle } from 'pixi.js';
 import type { GameContext } from '../main';
+import { API_URL } from '../config';
 import { CharacterSprite, DEFAULT_LOOKS } from '../game/CharacterSprite';
 import type { CharacterLooks } from '../game/CharacterSprite';
 import { ALL_CARDS, activeCardSlotCountForRank, getMissingCardIds, getCardById } from '@ahf/shared';
@@ -389,7 +390,7 @@ export class LockerRoomScene {
     });
 
     try {
-      await fetch(`/player/${player.id}/cosmetics`, {
+      await fetch(`${API_URL}/player/${player.id}/cosmetics`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(player.cosmetics),

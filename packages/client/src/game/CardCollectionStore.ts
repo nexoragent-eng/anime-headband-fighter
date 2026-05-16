@@ -7,6 +7,7 @@ import {
   type CardCollectionState,
 } from '@ahf/shared';
 import type { PlayerProfile } from '@ahf/shared';
+import { API_URL } from '../config';
 
 function storageKey(playerId: string) {
   return `ahf:cards:${playerId}`;
@@ -48,7 +49,7 @@ export async function savePlayerCardCollection(player: PlayerProfile | null, col
   player.cardCollection = normalized;
   writeLocal(player.id, normalized);
   try {
-    await fetch(`/player/${player.id}/cards`, {
+    await fetch(`${API_URL}/player/${player.id}/cards`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(normalized),

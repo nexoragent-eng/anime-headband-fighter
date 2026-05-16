@@ -6,8 +6,7 @@ import { LockerRoomScene } from './scenes/LockerRoomScene';
 import { CharacterSprite } from './game/CharacterSprite';
 import type { PlayerProfile } from '@ahf/shared';
 
-declare const __SERVER_URL__: string;
-export const SERVER_URL = __SERVER_URL__;
+export { SERVER_URL, API_URL } from './config';
 
 export type SceneName = 'login' | 'hub' | 'fight' | 'locker';
 

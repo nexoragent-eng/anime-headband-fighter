@@ -1,0 +1,85 @@
+diff --git a/packages/client/src/config.ts b/packages/client/src/config.ts
+new file mode 100644
+index 0000000..d33fc6a
+--- /dev/null
++++ b/packages/client/src/config.ts
+@@ -0,0 +1,4 @@
++declare const __SERVER_URL__: string;
++
++export const SERVER_URL = __SERVER_URL__;
++export const API_URL = SERVER_URL.replace(/^wss:/, 'https:').replace(/^ws:/, 'http:');
+diff --git a/packages/client/src/main.ts b/packages/client/src/main.ts
+index 24aa299..06b20a2 100644
+--- a/packages/client/src/main.ts
++++ b/packages/client/src/main.ts
+@@ -6,8 +6,7 @@ import { LockerRoomScene } from './scenes/LockerRoomScene';
+ import { CharacterSprite } from './game/CharacterSprite';
+ import type { PlayerProfile } from '@ahf/shared';
+ 
+-declare const __SERVER_URL__: string;
+-export const SERVER_URL = __SERVER_URL__;
++export { SERVER_URL, API_URL } from './config';
+ 
+ export type SceneName = 'login' | 'hub' | 'fight' | 'locker';
+ 
+diff --git a/packages/client/src/scenes/LoginScene.ts b/packages/client/src/scenes/LoginScene.ts
+index e1dfa57..e4d122c 100644
+--- a/packages/client/src/scenes/LoginScene.ts
++++ b/packages/client/src/scenes/LoginScene.ts
+@@ -1,5 +1,6 @@
+ import { Container, Graphics, Text, TextStyle } from 'pixi.js';
+ import type { GameContext } from '../main';
++import { API_URL } from '../config';
+ import type { PlayerProfile } from '@ahf/shared';
+ 
+ export class LoginScene {
+@@ -113,7 +114,7 @@ export class LoginScene {
+       btn.textContent = 'Entering...';
+       error.textContent = '';
+       try {
+-        const res = await fetch('/auth/guest', {
++        const res = await fetch(`${API_URL}/auth/guest`, {
+           method: 'POST',
+           headers: { 'Content-Type': 'application/json' },
+           body: JSON.stringify({ username: name }),
+diff --git a/packages/client/src/scenes/LockerRoomScene.ts b/packages/client/src/scenes/LockerRoomScene.ts
+index 87c2f1e..536074d 100644
+--- a/packages/client/src/scenes/LockerRoomScene.ts
++++ b/packages/client/src/scenes/LockerRoomScene.ts
+@@ -1,5 +1,6 @@
+ import { Container, Graphics, Text, TextStyle } from 'pixi.js';
+ import type { GameContext } from '../main';
++import { API_URL } from '../config';
+ import { CharacterSprite, DEFAULT_LOOKS } from '../game/CharacterSprite';
+ import type { CharacterLooks } from '../game/CharacterSprite';
+ import { ALL_CARDS, activeCardSlotCountForRank, getMissingCardIds, getCardById } from '@ahf/shared';
+@@ -389,7 +390,7 @@ export class LockerRoomScene {
+     });
+ 
+     try {
+-      await fetch(`/player/${player.id}/cosmetics`, {
++      await fetch(`${API_URL}/player/${player.id}/cosmetics`, {
+         method: 'POST',
+         headers: { 'Content-Type': 'application/json' },
+         body: JSON.stringify(player.cosmetics),
+diff --git a/packages/client/src/game/CardCollectionStore.ts b/packages/client/src/game/CardCollectionStore.ts
+index c923417..77ddabc 100644
+--- a/packages/client/src/game/CardCollectionStore.ts
++++ b/packages/client/src/game/CardCollectionStore.ts
+@@ -7,6 +7,7 @@ import {
+   type CardCollectionState,
+ } from '@ahf/shared';
+ import type { PlayerProfile } from '@ahf/shared';
++import { API_URL } from '../config';
+ 
+ function storageKey(playerId: string) {
+   return `ahf:cards:${playerId}`;
+@@ -48,7 +49,7 @@ export async function savePlayerCardCollection(player: PlayerProfile | null, col
+   player.cardCollection = normalized;
+   writeLocal(player.id, normalized);
+   try {
+-    await fetch(`/player/${player.id}/cards`, {
++    await fetch(`${API_URL}/player/${player.id}/cards`, {
+       method: 'POST',
+       headers: { 'Content-Type': 'application/json' },
+       body: JSON.stringify(normalized),

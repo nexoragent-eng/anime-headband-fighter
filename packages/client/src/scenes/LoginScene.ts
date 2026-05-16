@@ -1,5 +1,6 @@
 import { Container, Graphics, Text, TextStyle } from 'pixi.js';
 import type { GameContext } from '../main';
+import { API_URL } from '../config';
 import type { PlayerProfile } from '@ahf/shared';
 
 export class LoginScene {
@@ -113,7 +114,7 @@ export class LoginScene {
       btn.textContent = 'Entering...';
       error.textContent = '';
       try {
-        const res = await fetch('/auth/guest', {
+        const res = await fetch(`${API_URL}/auth/guest`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ username: name }),
