@@ -29,27 +29,21 @@ export const DEFAULT_LOOKS: CharacterLooks = {
 };
 
 const ANIM_MAP: Record<AnimState, string> = {
-  [AnimState.IDLE]: "Idle",
+  [AnimState.IDLE]:         'Idle',
+  [AnimState.ATTACK]:       'PunchAttack',
+  [AnimState.HIGH_ATTACK]:  'SwordAttack',
+  [AnimState.LOW_ATTACK]:   'PunchAttack',
+  [AnimState.HEAVY_ATTACK]: 'SwordAttack',
+  [AnimState.BLOCK]:        'Idle',
+  [AnimState.DODGE]:        'Jump Loop',
+  [AnimState.HIT]:          'Hit',
+  [AnimState.KO]:           'Death',
+  [AnimState.BANKAI]:       'MagicAttack',
+  [AnimState.WIN]:          'Dance',
+};
 
-  // alles wat aanval is → Attack
-  [AnimState.ATTACK]: "Attack",
-  [AnimState.HIGH_ATTACK]: "Attack",
-  [AnimState.LOW_ATTACK]: "Attack",
-
-  // block heeft geen echte anim → fallback idle
-  [AnimState.BLOCK]: "Idle",
-
-  // dodge → Jump Loop (beste match)
-  [AnimState.DODGE]: "Jump Loop",
-
-  [AnimState.HIT]: "Hit",
-  [AnimState.KO]: "Death",
-
-  // Bankai bestaat niet → tijdelijk Attack
-  [AnimState.BANKAI]: "Attack",
-}
-
-const LOOPING = new Set([AnimState.IDLE, AnimState.BLOCK, AnimState.BANKAI]);
+// Only IDLE and WIN loop forever; everything else plays once then returns to Idle
+const LOOPING = new Set([AnimState.IDLE, AnimState.WIN]);
 
 // Skeleton has two slot systems:
 //   • "Solt :" slots — on character bones (Body, Head, Hand). Equipment renders ON the character.
@@ -208,17 +202,17 @@ export class CharacterSprite {
     this.spine.skeleton.setupPoseBones();
   }
 
-  playState(state: AnimState, loop = false) {
-    const anim = ANIM_MAP[state]
+  playState(state: AnimState): void {
+    const animName = ANIM_MAP[state];
+    const current = this.spine.state.tracks[0];
+    if (current?.animation?.name === animName) return;
 
-    const exists = this.spine.state.data.skeletonData.findAnimation(anim)
-
-    if (!exists) {
-      this.spine.state.setAnimation(0, "Idle", true)
-      return
+    if (LOOPING.has(state)) {
+      this.spine.state.setAnimation(0, animName, true);
+    } else {
+      this.spine.state.setAnimation(0, animName, false);
+      this.spine.state.addAnimation(0, 'Idle', true, 0);
     }
-
-    this.spine.state.setAnimation(0, anim, loop)
   }
 
   setFacing(facing: 'left' | 'right'): void {

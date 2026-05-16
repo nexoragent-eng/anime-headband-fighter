@@ -22,6 +22,7 @@ const SERVER_MOVE_TIMINGS: Record<MoveType, { windupMs: number; activeMs: number
   [MoveType.HIGH_ATTACK]: { windupMs: 200, activeMs: 120, recoveryMs: 300, rangePx: 164, missRecoveryMult: 1.35 },
   [MoveType.LOW_ATTACK]: { windupMs: 150, activeMs: 100, recoveryMs: 245, rangePx: 118, missRecoveryMult: 1.3 },
   [MoveType.BLOCK]: { windupMs: 0, activeMs: 260, recoveryMs: 170, rangePx: 0, missRecoveryMult: 1 },
+  [MoveType.HEAVY_ATTACK]: { windupMs: 220, activeMs: 120, recoveryMs: 300, rangePx: 164, missRecoveryMult: 1.35 },
   [MoveType.DODGE]: { windupMs: 0, activeMs: 120, recoveryMs: 380, rangePx: 0, missRecoveryMult: 1 },
   [MoveType.BANKAI]: { windupMs: 520, activeMs: 220, recoveryMs: 620, rangePx: 9999, missRecoveryMult: 1.2 },
 };
@@ -266,7 +267,7 @@ export class FightRoom extends Room<FightRoomState> {
     }
 
     let baseDmg = move === MoveType.ATTACK ? DAMAGE.ATTACK
-      : move === MoveType.HIGH_ATTACK ? DAMAGE.HIGH_ATTACK
+      : (move === MoveType.HIGH_ATTACK || move === MoveType.HEAVY_ATTACK) ? DAMAGE.HIGH_ATTACK
       : DAMAGE.LOW_ATTACK;
     baseDmg = Math.round(baseDmg * attacker.attackMult);
     if (defender.defenseMult > 1) baseDmg = Math.max(1, Math.round(baseDmg / defender.defenseMult));
@@ -285,7 +286,7 @@ export class FightRoom extends Room<FightRoomState> {
     const now = Date.now();
     if (now > defenderSess.blockActiveUntil || now < defenderSess.blockBrokenUntil) return false;
     // Heavy/Bankai beat block. They must be dodged or punished during startup.
-    if (move === MoveType.HIGH_ATTACK || move === MoveType.BANKAI) return false;
+    if (move === MoveType.HIGH_ATTACK || move === MoveType.HEAVY_ATTACK || move === MoveType.BANKAI) return false;
     return true;
   }
 
@@ -305,7 +306,7 @@ export class FightRoom extends Room<FightRoomState> {
     const existing = this.animResetTimers.get(key);
     if (existing) clearTimeout(existing);
     const t = setTimeout(() => {
-      if (fighter.animState === AnimState.HIT || fighter.animState === AnimState.BANKAI || fighter.animState === AnimState.ATTACK || fighter.animState === AnimState.HIGH_ATTACK || fighter.animState === AnimState.LOW_ATTACK || fighter.animState === AnimState.BLOCK) {
+      if (fighter.animState === AnimState.HIT || fighter.animState === AnimState.BANKAI || fighter.animState === AnimState.ATTACK || fighter.animState === AnimState.HIGH_ATTACK || fighter.animState === AnimState.HEAVY_ATTACK || fighter.animState === AnimState.LOW_ATTACK || fighter.animState === AnimState.BLOCK || fighter.animState === AnimState.DODGE) {
         fighter.animState = fighter.hp <= 0 ? AnimState.KO : AnimState.IDLE;
       }
     }, ms);
@@ -400,12 +401,13 @@ export class FightRoom extends Room<FightRoomState> {
 
 function moveToAnim(move: MoveType): AnimState {
   switch (move) {
-    case MoveType.ATTACK: return AnimState.ATTACK;
-    case MoveType.HIGH_ATTACK: return AnimState.HIGH_ATTACK;
-    case MoveType.LOW_ATTACK: return AnimState.LOW_ATTACK;
-    case MoveType.BLOCK: return AnimState.BLOCK;
-    case MoveType.DODGE: return AnimState.BLOCK;
-    case MoveType.BANKAI: return AnimState.BANKAI;
+    case MoveType.ATTACK:       return AnimState.ATTACK;
+    case MoveType.HIGH_ATTACK:  return AnimState.HIGH_ATTACK;
+    case MoveType.LOW_ATTACK:   return AnimState.LOW_ATTACK;
+    case MoveType.HEAVY_ATTACK: return AnimState.HEAVY_ATTACK;
+    case MoveType.BLOCK:        return AnimState.BLOCK;
+    case MoveType.DODGE:        return AnimState.DODGE;
+    case MoveType.BANKAI:       return AnimState.BANKAI;
     default: return AnimState.IDLE;
   }
 }

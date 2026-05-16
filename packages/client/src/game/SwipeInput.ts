@@ -116,20 +116,20 @@ export function bindKeyboard(
   };
 }
 
+// P1: Q=light  E=heavy  S=block  Space=dodge  R=bankai
 export const KEYBOARD_MAP_P1: Record<string, MoveType> = {
-  KeyD: MoveType.ATTACK,
-  KeyW: MoveType.HIGH_ATTACK,
-  KeyS: MoveType.LOW_ATTACK,
-  KeyA: MoveType.BLOCK,
-  ShiftLeft: MoveType.DODGE,
-  KeyQ: MoveType.BANKAI,
+  KeyQ: MoveType.ATTACK,
+  KeyE: MoveType.HEAVY_ATTACK,
+  KeyS: MoveType.BLOCK,
+  Space: MoveType.DODGE,
+  KeyR: MoveType.BANKAI,
 };
 
+// P2: I=light  O=heavy  L=block  Enter=dodge  P=bankai
 export const KEYBOARD_MAP_P2: Record<string, MoveType> = {
-  ArrowRight: MoveType.ATTACK,
-  ArrowUp: MoveType.HIGH_ATTACK,
-  ArrowDown: MoveType.LOW_ATTACK,
-  ArrowLeft: MoveType.BLOCK,
-  ShiftRight: MoveType.DODGE,
-  Numpad0: MoveType.BANKAI,
+  KeyI: MoveType.ATTACK,
+  KeyO: MoveType.HEAVY_ATTACK,
+  KeyL: MoveType.BLOCK,
+  Enter: MoveType.DODGE,
+  KeyP: MoveType.BANKAI,
 };

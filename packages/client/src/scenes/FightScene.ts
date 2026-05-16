@@ -206,7 +206,7 @@ export class FightScene {
 
   private drawControls(W: number, H: number) {
     const hint1 = new Text({
-      text: 'P1: D=Light  W=Heavy  S=Low  A=Block  Shift=Dodge  Q=Bankai\nTouch: swipe right/up/down, swipe left=dodge, hold=block',
+      text: 'P1: Q=Light  E=Heavy  S=Block  Space=Dodge  R=Bankai\nTouch: swipe to attack, hold=block',
       style: new TextStyle({ fill: 0x888888, fontSize: 11 }),
     });
     hint1.x = 12;
@@ -214,7 +214,7 @@ export class FightScene {
     this.container.addChild(hint1);
 
     const hint2 = new Text({
-      text: 'P2: →=Light  ↑=Heavy  ↓=Low  ←=Block  RShift=Dodge  0=Bankai\nTiming > mashing',
+      text: 'P2: I=Light  O=Heavy  L=Block  Enter=Dodge  P=Bankai\nTiming > mashing',
       style: new TextStyle({ fill: 0x888888, fontSize: 11, align: 'right' }),
     });
     hint2.anchor.set(1, 1);
@@ -511,6 +511,10 @@ export class FightScene {
     if (winner === 1) { msg = `${this.ctx.player?.username ?? 'P1'} WINS!`; color = 0x4a90d9; }
     else if (winner === 2) { msg = `${this.npcProfile?.name ?? 'P2'} WINS!`; color = this.npcProfile?.outfitColor ?? 0xe05050; }
 
+    // Winner plays Dance, loser stays in KO
+    if (winner === 1) { this.p1Fighter.animState = AnimState.WIN; }
+    else if (winner === 2) { this.p2Fighter.animState = AnimState.WIN; }
+
     if (winner === 1) this.tryGrantNpcReward();
 
     this.overlay.alpha = 0.75;
@@ -644,12 +648,13 @@ export class FightScene {
 
 function moveToAnim(move: MoveType): AnimState {
   switch (move) {
-    case MoveType.ATTACK: return AnimState.ATTACK;
-    case MoveType.HIGH_ATTACK: return AnimState.HIGH_ATTACK;
-    case MoveType.LOW_ATTACK: return AnimState.LOW_ATTACK;
-    case MoveType.BLOCK: return AnimState.BLOCK;
-    case MoveType.DODGE: return AnimState.BLOCK;
-    case MoveType.BANKAI: return AnimState.BANKAI;
-    default: return AnimState.IDLE;
+    case MoveType.ATTACK:       return AnimState.ATTACK;
+    case MoveType.HIGH_ATTACK:  return AnimState.HIGH_ATTACK;
+    case MoveType.LOW_ATTACK:   return AnimState.LOW_ATTACK;
+    case MoveType.HEAVY_ATTACK: return AnimState.HEAVY_ATTACK;
+    case MoveType.BLOCK:        return AnimState.BLOCK;
+    case MoveType.DODGE:        return AnimState.DODGE;
+    case MoveType.BANKAI:       return AnimState.BANKAI;
+    default:                    return AnimState.IDLE;
   }
 }

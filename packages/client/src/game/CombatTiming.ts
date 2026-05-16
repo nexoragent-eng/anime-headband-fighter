@@ -65,6 +65,15 @@ export const MOVE_TIMINGS: Record<MoveType, MoveTiming> = {
     missRecoveryMult: 1,
     note: 'Dodge: short invulnerability, long cooldown/recovery. Baitable.',
   },
+  [MoveType.HEAVY_ATTACK]: {
+    windupMs: 220,
+    activeMs: 120,
+    recoveryMs: 300,
+    rangePx: 164,
+    hitStunMs: 285,
+    missRecoveryMult: 1.35,
+    note: 'Heavy attack: high damage, high commitment.',
+  },
   [MoveType.BANKAI]: {
     windupMs: 520,
     activeMs: 220,
@@ -83,5 +92,5 @@ export function canBufferMove(move: MoveType): boolean {
 }
 
 export function isAttackMove(move: MoveType): boolean {
-  return move === MoveType.ATTACK || move === MoveType.HIGH_ATTACK || move === MoveType.LOW_ATTACK || move === MoveType.BANKAI;
+  return move === MoveType.ATTACK || move === MoveType.HIGH_ATTACK || move === MoveType.LOW_ATTACK || move === MoveType.HEAVY_ATTACK || move === MoveType.BANKAI;
 }

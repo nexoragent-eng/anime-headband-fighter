@@ -257,8 +257,8 @@ export function resetForRound(s: FighterState): void {
 
 export function isBlocked(defender: FighterState, move: MoveType, now = Date.now()): boolean {
   if (!defender.isBlocking || now < defender.blockBrokenUntil) return false;
-  // Heavy and Bankai beat plain block. They must be dodged or punished during startup.
-  if (move === MoveType.HIGH_ATTACK || move === MoveType.BANKAI) return false;
+  // Heavy attacks and Bankai beat plain block; must be dodged or punished during startup.
+  if (move === MoveType.HIGH_ATTACK || move === MoveType.HEAVY_ATTACK || move === MoveType.BANKAI) return false;
   return true;
 }
 
@@ -269,7 +269,8 @@ export function isEvaded(defender: FighterState, now = Date.now()): boolean {
 export function hitStunFor(move: MoveType): number {
   switch (move) {
     case MoveType.ATTACK: return 210;
-    case MoveType.HIGH_ATTACK: return 285;
+    case MoveType.HIGH_ATTACK:
+    case MoveType.HEAVY_ATTACK: return 285;
     case MoveType.LOW_ATTACK: return 235;
     case MoveType.BANKAI: return 420;
     default: return 0;
@@ -279,7 +280,8 @@ export function hitStunFor(move: MoveType): number {
 export function moveDamage(move: MoveType): number {
   switch (move) {
     case MoveType.ATTACK: return DAMAGE.ATTACK;
-    case MoveType.HIGH_ATTACK: return DAMAGE.HIGH_ATTACK;
+    case MoveType.HIGH_ATTACK:
+    case MoveType.HEAVY_ATTACK: return DAMAGE.HIGH_ATTACK;
     case MoveType.LOW_ATTACK: return DAMAGE.LOW_ATTACK;
     default: return 0;
   }
