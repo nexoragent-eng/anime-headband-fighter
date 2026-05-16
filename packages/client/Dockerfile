@@ -9,6 +9,7 @@ COPY packages/shared ./packages/shared
 COPY packages/client ./packages/client
 ARG VITE_SERVER_URL=ws://localhost:2567
 ENV VITE_SERVER_URL=$VITE_SERVER_URL
+RUN pnpm --filter @ahf/shared build
 RUN pnpm --filter @ahf/client build
 
 FROM nginx:alpine
