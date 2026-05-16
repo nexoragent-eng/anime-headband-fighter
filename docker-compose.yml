@@ -1,0 +1,36 @@
+version: '3.9'
+
+services:
+  server:
+    build:
+      context: ./packages/server
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    ports:
+      - "2567:2567"
+    environment:
+      - NODE_ENV=production
+      - PORT=2567
+      - DB_PATH=/data/game.db
+    volumes:
+      - server_data:/data
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:2567/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  client:
+    build:
+      context: ./packages/client
+      dockerfile: Dockerfile
+      args:
+        - VITE_SERVER_URL=wss://YOUR_SERVER_DOMAIN
+    restart: unless-stopped
+    ports:
+      - "80:80"
+    depends_on:
+      - server
+
+volumes:
+  server_data:
