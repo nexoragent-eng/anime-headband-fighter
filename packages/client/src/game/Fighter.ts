@@ -108,6 +108,11 @@ export class Fighter {
     if (state === AnimState.HIT) this.flashAlpha = 1;
     if (state === AnimState.BANKAI) this.bankaiPulse = 1;
     this.charSprite?.playState(state);
+    this.charSprite?.setTimeScale(1.0); // reset speed on every state change
+  }
+
+  setAnimTimeScale(scale: number): void {
+    this.charSprite?.setTimeScale(scale);
   }
 
   get animState() { return this._animState; }

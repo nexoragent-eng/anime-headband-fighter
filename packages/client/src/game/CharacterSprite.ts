@@ -196,6 +196,11 @@ export class CharacterSprite {
       looks.supportIndex === 2 ? 'SupportObject_02' : null);
   }
 
+  setTimeScale(scale: number): void {
+    const track = this.spine.state.tracks[0];
+    if (track) track.timeScale = scale;
+  }
+
   /** Stop animation and freeze bones at setup pose. */
   freeze(): void {
     this.spine.state.clearTracks();

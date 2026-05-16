@@ -28,6 +28,28 @@ import { Client } from 'colyseus.js';
 import type { Room } from 'colyseus.js';
 import { SERVER_URL } from '../config';
 
+// ── Constants ──────────────────────────────────────────────────────────────────
+
+const MOVE_SPEED_PX_S = 160;   // pixels per second while moving
+const ARENA_MARGIN   = 0.09;   // fraction of screen width kept clear on each side
+const MIN_SEP_PX     = 72;     // minimum centre-to-centre gap between fighters
+
+const LUNGE_PX: Partial<Record<MoveType, number>> = {
+  [MoveType.ATTACK]:       20,
+  [MoveType.LOW_ATTACK]:   14,
+  [MoveType.HIGH_ATTACK]:  36,
+  [MoveType.HEAVY_ATTACK]: 36,
+};
+
+// Spine playback speed per attack — light = snappy, heavy = weighty
+const ANIM_SPEED: Partial<Record<MoveType, number>> = {
+  [MoveType.ATTACK]:       1.30,
+  [MoveType.LOW_ATTACK]:   1.20,
+  [MoveType.HIGH_ATTACK]:  0.80,
+  [MoveType.HEAVY_ATTACK]: 0.80,
+  [MoveType.BANKAI]:       0.85,
+};
+
 // ── Types ─────────────────────────────────────────────────────────────────────
 
 type FightPhase = 'countdown' | 'fighting' | 'round_end' | 'card_pick' | 'match_end';
@@ -102,6 +124,7 @@ export class FightScene {
   private p2Input: SwipeInput | undefined;
   private cleanupKb1: (() => void) | undefined;
   private cleanupKb2: (() => void) | undefined;
+  private cleanupMovementKb: (() => void) | undefined;
   private phase: FightPhase = 'countdown';
   private round = 1;
   private roundTimer = ROUND_DURATION;
@@ -112,6 +135,11 @@ export class FightScene {
   private npcRng: (() => number) | null = null;
   private npcInputCooldown = 0;
   private npcRewardGranted = false;
+  // Movement
+  private p1MoveDir: -1 | 0 | 1 = 0;
+  private p2MoveDir: -1 | 0 | 1 = 0;
+  private arenaLeft = 0;
+  private arenaRight = 0;
 
   constructor(
     private ctx: GameContext,
@@ -483,7 +511,44 @@ export class FightScene {
     this.cleanupKb1 = bindKeyboard(KEYBOARD_MAP_P1, m => this.queueMove('p1', m));
     this.cleanupKb2 = bindKeyboard(KEYBOARD_MAP_P2, m => this.queueMove('p2', m));
 
+    // Arena bounds (inner 82 % of screen)
+    const { width: W } = this.ctx.app.screen;
+    this.arenaLeft  = W * ARENA_MARGIN;
+    this.arenaRight = W * (1 - ARENA_MARGIN);
+
+    this.cleanupMovementKb = this.bindLocalMovementKb();
     this.startCountdown();
+  }
+
+  // Tracks held movement keys and updates p1/p2MoveDir continuously.
+  private bindLocalMovementKb(): () => void {
+    const held = new Set<string>();
+    const P1L = new Set(['KeyA']);
+    const P1R = new Set(['KeyD']);
+    const P2L = new Set(['ArrowLeft']);
+    const P2R = new Set(['ArrowRight']);
+    const update = () => {
+      this.p1MoveDir = [...P1L].some(k => held.has(k)) ? -1 : [...P1R].some(k => held.has(k)) ? 1 : 0;
+      this.p2MoveDir = [...P2L].some(k => held.has(k)) ? -1 : [...P2R].some(k => held.has(k)) ? 1 : 0;
+    };
+    const onDown = (e: KeyboardEvent) => { held.add(e.code); update(); };
+    const onUp   = (e: KeyboardEvent) => { held.delete(e.code); update(); };
+    window.addEventListener('keydown', onDown);
+    window.addEventListener('keyup',   onUp);
+    return () => {
+      window.removeEventListener('keydown', onDown);
+      window.removeEventListener('keyup',   onUp);
+    };
+  }
+
+  // Direction the NPC (p2) should step this frame.
+  private calcNpcMoveDir(): -1 | 0 | 1 {
+    const dx   = this.p2Fighter.container.x - this.p1Fighter.container.x;
+    const dist = Math.abs(dx);
+    const sign = (dx > 0 ? 1 : -1) as 1 | -1;
+    if (dist > 210) return -sign as -1 | 0 | 1; // too far → approach
+    if (dist < 80)  return  sign as -1 | 0 | 1; // too close → retreat
+    return 0;
   }
 
   // ── Ticker ────────────────────────────────────────────────────────────────
@@ -508,6 +573,8 @@ export class FightScene {
       this.countdown -= dt / 1000;
       this.overlayText.text = Math.ceil(this.countdown) > 0 ? String(Math.ceil(this.countdown)) : 'FIGHT!';
       if (this.countdown <= -0.6) this.startRound();
+      this.p1Fighter.update(dt);
+      this.p2Fighter.update(dt);
       return;
     }
 
@@ -518,6 +585,33 @@ export class FightScene {
       tickPassiveEnergy(this.s1, this.s2, dt);
 
       if (this.npcProfile && this.npcRng) this.updateNpcInput(dt);
+
+      // ── Fighter movement ────────────────────────────────────────────────
+      const nowPerf = performance.now();
+      const mdt     = dt / 1000;
+
+      const p1Free = nowPerf >= this.actionRuntime.p1.lockedUntil && Date.now() >= this.s1.hitStunUntil;
+      if (p1Free && this.p1MoveDir !== 0) {
+        this.p1Fighter.container.x = Math.max(this.arenaLeft, Math.min(this.arenaRight,
+          this.p1Fighter.container.x + this.p1MoveDir * MOVE_SPEED_PX_S * mdt,
+        ));
+      }
+
+      const p2Dir  = this.npcProfile ? this.calcNpcMoveDir() : this.p2MoveDir;
+      const p2Free = nowPerf >= this.actionRuntime.p2.lockedUntil && Date.now() >= this.s2.hitStunUntil;
+      if (p2Free && p2Dir !== 0) {
+        this.p2Fighter.container.x = Math.max(this.arenaLeft, Math.min(this.arenaRight,
+          this.p2Fighter.container.x + p2Dir * MOVE_SPEED_PX_S * mdt,
+        ));
+      }
+
+      // Keep fighters from overlapping
+      const sep = this.p2Fighter.container.x - this.p1Fighter.container.x;
+      if (sep < MIN_SEP_PX) {
+        const push = (MIN_SEP_PX - sep) / 2;
+        this.p1Fighter.container.x = Math.max(this.arenaLeft,  this.p1Fighter.container.x - push);
+        this.p2Fighter.container.x = Math.min(this.arenaRight, this.p2Fighter.container.x + push);
+      }
 
       this.tryStartBufferedAction('p1');
       this.tryStartBufferedAction('p2');
@@ -612,7 +706,7 @@ export class FightScene {
     const fighter = key === 'p1' ? this.p1Fighter : this.p2Fighter;
     const state = key === 'p1' ? this.s1 : this.s2;
 
-    if (now < state.hitStunUntil) return;
+    if (Date.now() < state.hitStunUntil) return; // hitStunUntil uses Date.now() base
     if (move === MoveType.DODGE && now < runtime.dodgeCooldownUntil) return;
 
     runtime.currentMove = move;
@@ -620,6 +714,8 @@ export class FightScene {
     runtime.bufferedMove = MoveType.NONE;
 
     fighter.animState = moveToAnim(move);
+    const animSpeed = ANIM_SPEED[move];
+    if (animSpeed) fighter.setAnimTimeScale(animSpeed);
 
     if (move === MoveType.BLOCK) {
       state.isBlocking = true;
@@ -664,6 +760,15 @@ export class FightScene {
     attackerFighter: Fighter, defenderFighter: Fighter,
     move: MoveType, attackerKey: 'p1' | 'p2', dir: 'right' | 'left',
   ) {
+    // Lunge toward opponent at the start of the active frame
+    const lunge = LUNGE_PX[move];
+    if (lunge) {
+      const towardOpp = defenderFighter.container.x > attackerFighter.container.x ? 1 : -1;
+      attackerFighter.container.x = Math.max(this.arenaLeft, Math.min(this.arenaRight,
+        attackerFighter.container.x + towardOpp * lunge,
+      ));
+    }
+
     const timing = MOVE_TIMINGS[move];
     const runtime = this.actionRuntime[attackerKey];
 
@@ -751,6 +856,10 @@ export class FightScene {
     resetForRound(this.s2);
     this.p1Fighter.animState = AnimState.IDLE;
     this.p2Fighter.animState = AnimState.IDLE;
+    // Reset positions to centre-stage for each round
+    const { width: W } = this.ctx.app.screen;
+    this.p1Fighter.container.x = W * 0.28;
+    this.p2Fighter.container.x = W * 0.72;
     this.roundTimer = ROUND_DURATION;
     this.actionRuntime.p1 = freshActionRuntime();
     this.actionRuntime.p2 = freshActionRuntime();
@@ -865,7 +974,7 @@ export class FightScene {
 
   private drawControls(W: number, H: number) {
     const hint1 = new Text({
-      text: 'P1: Q=Light  E=Heavy  S=Block  Space=Dodge  R=Bankai\nTouch: swipe to attack, hold=block',
+      text: 'P1: A/D=move  Q=Light  E=Heavy  S=Block  Space=Dodge  R=Bankai',
       style: new TextStyle({ fill: 0x888888, fontSize: 11 }),
     });
     hint1.x = 12;
@@ -873,7 +982,7 @@ export class FightScene {
     this.container.addChild(hint1);
 
     const hint2 = new Text({
-      text: 'P2: I=Light  O=Heavy  L=Block  Enter=Dodge  P=Bankai\nTiming > mashing',
+      text: 'P2: ←/→=move  I=Light  O=Heavy  L=Block  Enter=Dodge  P=Bankai',
       style: new TextStyle({ fill: 0x888888, fontSize: 11, align: 'right' }),
     });
     hint2.anchor.set(1, 1);
@@ -909,6 +1018,7 @@ export class FightScene {
     this.p2Input?.destroy();
     this.cleanupKb1?.();
     this.cleanupKb2?.();
+    this.cleanupMovementKb?.();
 
     this.cardPicker?.destroy();
     this.hud.destroy();
