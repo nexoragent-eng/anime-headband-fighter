@@ -29,15 +29,24 @@ export const DEFAULT_LOOKS: CharacterLooks = {
 };
 
 const ANIM_MAP: Record<AnimState, string> = {
-  idle: "idle",
-  attack: "attack",
-  high_attack: "high_attack",
-  low_attack: "low_attack",
-  block: "block",
-  hit: "hit",
-  ko: "ko",
-  bankai: "bankai",
-  [AnimState.DODGE]: "Jump",
+  [AnimState.IDLE]: "Idle",
+
+  // alles wat aanval is → Attack
+  [AnimState.ATTACK]: "Attack",
+  [AnimState.HIGH_ATTACK]: "Attack",
+  [AnimState.LOW_ATTACK]: "Attack",
+
+  // block heeft geen echte anim → fallback idle
+  [AnimState.BLOCK]: "Idle",
+
+  // dodge → Jump Loop (beste match)
+  [AnimState.DODGE]: "Jump Loop",
+
+  [AnimState.HIT]: "Hit",
+  [AnimState.KO]: "Death",
+
+  // Bankai bestaat niet → tijdelijk Attack
+  [AnimState.BANKAI]: "Attack",
 }
 
 const LOOPING = new Set([AnimState.IDLE, AnimState.BLOCK, AnimState.BANKAI]);
@@ -199,11 +208,17 @@ export class CharacterSprite {
     this.spine.skeleton.setupPoseBones();
   }
 
-  playState(state: AnimState): void {
-    const animName = ANIM_MAP[state];
-    const current = this.spine.state.tracks[0];
-    if (current?.animation?.name === animName) return;
-    this.spine.state.setAnimation(0, animName, LOOPING.has(state));
+  playState(state: AnimState, loop = false) {
+    const anim = ANIM_MAP[state]
+
+    const exists = this.spine.state.data.skeletonData.findAnimation(anim)
+
+    if (!exists) {
+      this.spine.state.setAnimation(0, "Idle", true)
+      return
+    }
+
+    this.spine.state.setAnimation(0, anim, loop)
   }
 
   setFacing(facing: 'left' | 'right'): void {
