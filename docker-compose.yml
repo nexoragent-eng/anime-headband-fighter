@@ -27,8 +27,6 @@ services:
       args:
         - VITE_SERVER_URL=wss://api.anime.futuredays.nl
     restart: unless-stopped
-    ports:
-      - "80:80"
     depends_on:
       - server
 
