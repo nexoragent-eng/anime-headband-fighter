@@ -13,18 +13,26 @@ import {
   applyRoundWin,
   resetForRound,
 } from '../game/CombatEngine';
-import type { FighterState } from '../game/CombatEngine';
+import type { FighterState as LocalFighterState } from '../game/CombatEngine';
 import { MoveType, AnimState } from '@ahf/shared';
 import type { CardDefinition } from '@ahf/shared';
 import { getPlayerCardCollection, claimCardRewardForPlayer } from '../game/CardCollectionStore';
 import { NPC_ROSTER, npcAITick, npcRng, type NPCProfile } from '../../../shared/src/npcs';
 import { drawRewardCards, getCardById } from '@ahf/shared';
-import { COUNTDOWN_DURATION, ROUND_DURATION, ROUNDS_TO_WIN, DODGE_IFRAME_MS, DODGE_COOLDOWN_MS, HIT_STOP_MS } from '@ahf/shared';
+import {
+  COUNTDOWN_DURATION, ROUND_DURATION, ROUNDS_TO_WIN,
+  DODGE_IFRAME_MS, DODGE_COOLDOWN_MS, HIT_STOP_MS,
+} from '@ahf/shared';
 import { MOVE_TIMINGS, INPUT_BUFFER_MS, canBufferMove, isAttackMove } from '../game/CombatTiming';
+import { Client } from 'colyseus.js';
+import type { Room } from 'colyseus.js';
+import { SERVER_URL } from '../config';
+
+// ── Types ─────────────────────────────────────────────────────────────────────
 
 type FightPhase = 'countdown' | 'fighting' | 'round_end' | 'card_pick' | 'match_end';
-
 type FighterKey = 'p1' | 'p2';
+
 interface ActionRuntime {
   lockedUntil: number;
   bufferedMove: MoveType;
@@ -45,6 +53,21 @@ function freshActionRuntime(): ActionRuntime {
   };
 }
 
+function moveToAnim(move: MoveType): AnimState {
+  switch (move) {
+    case MoveType.ATTACK:       return AnimState.ATTACK;
+    case MoveType.HIGH_ATTACK:  return AnimState.HIGH_ATTACK;
+    case MoveType.LOW_ATTACK:   return AnimState.LOW_ATTACK;
+    case MoveType.HEAVY_ATTACK: return AnimState.HEAVY_ATTACK;
+    case MoveType.BLOCK:        return AnimState.BLOCK;
+    case MoveType.DODGE:        return AnimState.DODGE;
+    case MoveType.BANKAI:       return AnimState.BANKAI;
+    default:                    return AnimState.IDLE;
+  }
+}
+
+// ── FightScene ────────────────────────────────────────────────────────────────
+
 export class FightScene {
   private container: Container;
   private ticker: Ticker;
@@ -52,43 +75,53 @@ export class FightScene {
   private p1Fighter: Fighter;
   private p2Fighter: Fighter;
   private bankaiEffect: BankaiEffect;
-  private s1: FighterState;
-  private s2: FighterState;
-  private p1Input: SwipeInput;
-  private p2Input: SwipeInput;
-  private cleanupKb1: () => void;
-  private cleanupKb2: () => void;
-  private phase: FightPhase = 'countdown';
-  private round = 1;
-  private roundTimer = ROUND_DURATION; // seconds
-  private countdown = COUNTDOWN_DURATION;
-  private actionRuntime: Record<FighterKey, ActionRuntime> = {
-    p1: freshActionRuntime(),
-    p2: freshActionRuntime(),
-  };
   private overlay: Graphics;
   private overlayText: Text;
-  private roundEndScheduled = false;
   private cardPicker: CardRewardUI | null = null;
   private destroyed = false;
   private impactShakeMs = 0;
   private impactShakeStrength = 0;
+  private timeouts = new Set<ReturnType<typeof setTimeout>>();
+  private animResets = new Map<'p1' | 'p2', ReturnType<typeof setTimeout>>();
+
+  // ── Network mode ──────────────────────────────────────────────────────────
+  private fightRoom: Room | null = null;
+  private myRole: 'A' | 'B' = 'A';
+  private netPhase = '';
+  private prevMyAnim = '';
+  private prevOppAnim = '';
+  private cardPickShown = false;
+  private netInput: SwipeInput | null = null;
+  private netCleanupKb: (() => void) | null = null;
+
+  // ── NPC / local mode ──────────────────────────────────────────────────────
+  private s1!: LocalFighterState;
+  private s2!: LocalFighterState;
+  private p1Input: SwipeInput | undefined;
+  private p2Input: SwipeInput | undefined;
+  private cleanupKb1: (() => void) | undefined;
+  private cleanupKb2: (() => void) | undefined;
+  private phase: FightPhase = 'countdown';
+  private round = 1;
+  private roundTimer = ROUND_DURATION;
+  private countdown = COUNTDOWN_DURATION;
+  private actionRuntime!: Record<FighterKey, ActionRuntime>;
+  private roundEndScheduled = false;
   private npcProfile: NPCProfile | null = null;
   private npcRng: (() => number) | null = null;
   private npcInputCooldown = 0;
   private npcRewardGranted = false;
 
-  // Track every setTimeout so we can cancel on destroy
-  private timeouts = new Set<ReturnType<typeof setTimeout>>();
-  // Track per-fighter anim reset timers
-  private animResets = new Map<'p1' | 'p2', ReturnType<typeof setTimeout>>();
-
-  constructor(private ctx: GameContext, opts: { roomId?: string; local?: boolean; npcId?: string }) {
+  constructor(
+    private ctx: GameContext,
+    opts: { reservation?: unknown; npcId?: string; local?: boolean },
+  ) {
     this.container = new Container();
     ctx.app.stage.addChild(this.container);
 
     const { width: W, height: H } = ctx.app.screen;
 
+    // Background
     const bg = new Graphics();
     bg.rect(0, 0, W, H).fill(0x1a1a2e);
     bg.rect(0, H * 0.72, W, H * 0.28).fill(0x16213e);
@@ -103,17 +136,9 @@ export class FightScene {
     this.container.addChild(this.bankaiEffect.container);
 
     const fightY = H * 0.62;
-    this.s1 = defaultFighterState();
-    this.s2 = defaultFighterState();
-    this.applyActiveCardLoadout();
-
-    const p1Name = ctx.player?.username ?? 'Player 1';
-    this.npcProfile = opts.npcId ? NPC_ROSTER.find(n => n.id === opts.npcId) ?? null : null;
-    this.npcRng = this.npcProfile ? npcRng(Date.now() & 0xfffffff) : null;
-    const p2Name = this.npcProfile?.name ?? 'Player 2';
-    const p2Aura = this.npcProfile?.auraColor ?? 0xff8c00;
-
     const cos = ctx.player?.cosmetics;
+    const p1Name = ctx.player?.username ?? 'Player 1';
+
     this.p1Fighter = new Fighter({
       name: p1Name,
       facing: 'right',
@@ -133,12 +158,24 @@ export class FightScene {
     this.p1Fighter.container.y = fightY;
     this.container.addChild(this.p1Fighter.container);
 
-    this.p2Fighter = new Fighter({ name: p2Name, auraColor: p2Aura, facing: 'left', looks: { bodyObject: 2, hairObject: 2, handObject: 2, eyeType: 'Anger' } });
+    const npcForLooks = opts.npcId ? NPC_ROSTER.find(n => n.id === opts.npcId) ?? null : null;
+    const p2Aura = npcForLooks?.auraColor ?? 0xff8c00;
+    this.p2Fighter = new Fighter({
+      name: npcForLooks?.name ?? 'Opponent',
+      auraColor: p2Aura,
+      facing: 'left',
+      looks: { bodyObject: 2, hairObject: 2, handObject: 2, eyeType: 'Anger' },
+    });
     this.p2Fighter.container.x = W * 0.72;
     this.p2Fighter.container.y = fightY;
     this.container.addChild(this.p2Fighter.container);
 
-    this.hud = new HUD(W, H, { p1Name, p2Name, p1Color: 0x4a90d9, p2Color: p2Aura });
+    this.hud = new HUD(W, H, {
+      p1Name,
+      p2Name: npcForLooks?.name ?? 'Opponent',
+      p1Color: 0x4a90d9,
+      p2Color: p2Aura,
+    });
     this.container.addChild(this.hud.container);
 
     this.overlay = new Graphics();
@@ -163,21 +200,20 @@ export class FightScene {
     this.overlayText.y = H / 2;
     this.container.addChild(this.overlayText);
 
-    this.drawControls(W, H);
-
-    this.p1Input = new SwipeInput(window, 'left', m => { this.queueMove('p1', m); });
-    this.p2Input = new SwipeInput(window, 'right', m => { this.queueMove('p2', m); });
-    this.cleanupKb1 = bindKeyboard(KEYBOARD_MAP_P1, m => { this.queueMove('p1', m); });
-    this.cleanupKb2 = bindKeyboard(KEYBOARD_MAP_P2, m => { this.queueMove('p2', m); });
-
-    this.startCountdown();
-
     this.ticker = new Ticker();
     this.ticker.add(this.update.bind(this));
     this.ticker.start();
+
+    // Mode selection
+    if (opts.reservation) {
+      this.setupNetworkMode(opts.reservation);
+    } else {
+      this.drawControls(W, H);
+      this.setupLocalMode(opts.npcId);
+    }
   }
 
-  // ── Safe timeout wrapper ───────────────────────────────────────────────────
+  // ── Safe timeout ──────────────────────────────────────────────────────────
 
   private after(ms: number, fn: () => void): void {
     if (this.destroyed) return;
@@ -188,61 +224,220 @@ export class FightScene {
     this.timeouts.add(id);
   }
 
-  // ── Anim reset (debounced per fighter) ────────────────────────────────────
+  // ── Network mode ──────────────────────────────────────────────────────────
 
-  private scheduleAnimReset(key: 'p1' | 'p2', state: FighterState, fighter: Fighter, ms: number) {
-    const existing = this.animResets.get(key);
-    if (existing) clearTimeout(existing);
-    const id = setTimeout(() => {
-      this.animResets.delete(key);
-      if (!this.destroyed) {
-        fighter.animState = state.hp <= 0 ? AnimState.KO : AnimState.IDLE;
+  private setupNetworkMode(reservation: unknown) {
+    this.overlay.alpha = 0.6;
+    this.overlayText.text = 'Connecting...';
+    (this.overlayText.style as TextStyle).fontSize = 36;
+
+    const sendMove = (move: MoveType) => {
+      if (!this.fightRoom || this.netPhase !== 'fighting') return;
+      this.fightRoom.send('input', { move });
+    };
+
+    this.netInput = new SwipeInput(window, 'full', sendMove);
+    this.netCleanupKb = bindKeyboard(KEYBOARD_MAP_P1, sendMove);
+
+    void this.connectFightRoom(reservation);
+  }
+
+  private async connectFightRoom(reservation: unknown) {
+    const client = new Client(SERVER_URL);
+    try {
+      const room = await client.consumeSeatReservation(reservation as Parameters<typeof client.consumeSeatReservation>[0]);
+      if (this.destroyed) { void room.leave(); return; }
+      this.fightRoom = room;
+    } catch (e) {
+      console.error('[FightScene] consumeSeatReservation failed:', e);
+      if (!this.destroyed) this.after(500, () => this.ctx.switchScene('hub'));
+      return;
+    }
+
+    // Determine role
+    const state = (this.fightRoom as any).state;
+    const myId = this.ctx.player?.id ?? 'guest';
+    this.myRole = state?.playerA?.playerId === myId ? 'A' : 'B';
+
+    // Phase listener (Colyseus schema .listen API)
+    // eslint-disable-next-line @typescript-eslint/no-unsafe-call
+    (state as any)?.listen?.('phase', (phase: string) => {
+      if (!this.destroyed) this.handleNetPhase(phase);
+    });
+
+    // Handle match end (room will disconnect after card pick)
+    this.fightRoom.onLeave(() => {
+      if (!this.destroyed && this.netPhase !== 'hub') {
+        this.netPhase = 'hub';
+        this.after(400, () => this.ctx.switchScene('hub'));
       }
-    }, ms);
-    this.animResets.set(key, id);
-  }
-
-  // ── Scene phases ──────────────────────────────────────────────────────────
-
-  private drawControls(W: number, H: number) {
-    const hint1 = new Text({
-      text: 'P1: Q=Light  E=Heavy  S=Block  Space=Dodge  R=Bankai\nTouch: swipe to attack, hold=block',
-      style: new TextStyle({ fill: 0x888888, fontSize: 11 }),
     });
-    hint1.x = 12;
-    hint1.y = H - 38;
-    this.container.addChild(hint1);
 
-    const hint2 = new Text({
-      text: 'P2: I=Light  O=Heavy  L=Block  Enter=Dodge  P=Bankai\nTiming > mashing',
-      style: new TextStyle({ fill: 0x888888, fontSize: 11, align: 'right' }),
-    });
-    hint2.anchor.set(1, 1);
-    hint2.x = W - 12;
-    hint2.y = H - 4;
-    this.container.addChild(hint2);
+    // Trigger for current phase (we might have joined mid-countdown)
+    this.handleNetPhase(state.phase as string);
   }
 
-  private startCountdown() {
-    this.phase = 'countdown';
-    this.countdown = COUNTDOWN_DURATION;
-    this.overlay.alpha = 0.5;
-    this.overlayText.text = String(this.countdown);
-    this.overlayText.style.fill = 0xffffff;
+  private handleNetPhase(phase: string) {
+    this.netPhase = phase;
+
+    if (phase === 'countdown') {
+      this.overlay.alpha = 0.5;
+      (this.overlayText.style as TextStyle).fontSize = 80;
+      this.overlayText.style.fill = 0xffffff;
+    } else if (phase === 'fighting') {
+      this.overlay.alpha = 0;
+      this.overlayText.text = '';
+      this.cardPickShown = false;
+    } else if (phase === 'round_end') {
+      this.showRoundEndOverlay();
+    } else if (phase === 'card_pick') {
+      this.showMatchEndOverlay();
+      this.after(1500, () => this.showNetCardPicker());
+    }
   }
 
-  private startRound() {
-    this.phase = 'fighting';
-    resetForRound(this.s1);
-    resetForRound(this.s2);
-    this.p1Fighter.animState = AnimState.IDLE;
-    this.p2Fighter.animState = AnimState.IDLE;
-    this.roundTimer = ROUND_DURATION;
-    this.actionRuntime.p1 = freshActionRuntime();
-    this.actionRuntime.p2 = freshActionRuntime();
-    this.roundEndScheduled = false;
+  private showRoundEndOverlay() {
+    const state = (this.fightRoom as any)?.state;
+    const winnerId = (state?.winnerId as string) ?? '';
+    const myId = this.ctx.player?.id ?? 'guest';
+
+    let msg = 'DRAW!';
+    let color = 0xffffff;
+    if (winnerId && winnerId === myId) { msg = 'ROUND WON!'; color = 0x4a90d9; }
+    else if (winnerId) { msg = 'ROUND LOST'; color = 0xe05050; }
+
+    this.overlay.alpha = 0.6;
+    this.overlayText.text = msg;
+    this.overlayText.style.fill = color;
+    (this.overlayText.style as TextStyle).fontSize = 60;
+  }
+
+  private showMatchEndOverlay() {
+    const state = (this.fightRoom as any)?.state;
+    const matchWinnerId = (state?.matchWinnerId as string) ?? '';
+    const myId = this.ctx.player?.id ?? 'guest';
+
+    let msg = 'DRAW!';
+    let color = 0xffd700;
+    if (matchWinnerId && matchWinnerId === myId) {
+      msg = `${this.ctx.player?.username ?? 'YOU'} WIN!`;
+      color = 0x4a90d9;
+      this.p1Fighter.animState = AnimState.WIN;
+    } else if (matchWinnerId) {
+      const oppState = this.myRole === 'A' ? (state as any)?.playerB : (state as any)?.playerA;
+      msg = `${(oppState?.username as string) ?? 'OPPONENT'} WINS!`;
+      color = 0xe05050;
+      this.p2Fighter.animState = AnimState.WIN;
+    }
+
+    this.overlay.alpha = 0.75;
+    this.overlayText.text = msg;
+    this.overlayText.style.fill = color;
+    (this.overlayText.style as TextStyle).fontSize = 72;
+  }
+
+  private showNetCardPicker() {
+    if (this.destroyed || this.cardPickShown) return;
+    const state = (this.fightRoom as any)?.state;
+    if (!state) return;
+
+    const myCards: unknown[] = Array.from(
+      (this.myRole === 'A' ? state.cardOptionsA : state.cardOptionsB) ?? [],
+    );
+
+    if (myCards.length === 0) {
+      // Cards not pushed yet — retry briefly
+      this.cardPickShown = false;
+      this.after(250, () => this.showNetCardPicker());
+      return;
+    }
+    this.cardPickShown = true;
+
+    const cardDefs: CardDefinition[] = myCards
+      .map((c) => getCardById((c as { id: string }).id))
+      .filter(Boolean) as CardDefinition[];
+
     this.overlay.alpha = 0;
     this.overlayText.text = '';
+
+    const collection = getPlayerCardCollection(this.ctx.player);
+    this.cardPicker = new CardRewardUI(
+      this.ctx.app.screen.width,
+      this.ctx.app.screen.height,
+      cardDefs,
+      collection,
+      (card: CardDefinition) => {
+        if (this.destroyed) return;
+        this.fightRoom?.send('card_pick', { cardId: card.id });
+        this.cardPicker?.destroy();
+        this.cardPicker = null;
+        this.overlay.alpha = 0.6;
+        this.overlayText.text = `${card.name} selected`;
+        (this.overlayText.style as TextStyle).fontSize = 36;
+        this.after(1200, () => this.ctx.switchScene('hub'));
+      },
+    );
+    this.container.addChild(this.cardPicker.container);
+  }
+
+  // ── Network update (per-frame) ────────────────────────────────────────────
+
+  private updateNetwork(dt: number) {
+    const state = (this.fightRoom as any)?.state;
+    if (!state?.playerA) return;
+
+    const me = this.myRole === 'A' ? state.playerA : state.playerB;
+    const opp = this.myRole === 'A' ? state.playerB : state.playerA;
+
+    // Drive animations from server state
+    const myAnim = me?.animState as string;
+    const oppAnim = opp?.animState as string;
+    if (myAnim && myAnim !== this.prevMyAnim) {
+      this.prevMyAnim = myAnim;
+      this.p1Fighter.animState = myAnim as AnimState;
+    }
+    if (oppAnim && oppAnim !== this.prevOppAnim) {
+      this.prevOppAnim = oppAnim;
+      this.p2Fighter.animState = oppAnim as AnimState;
+    }
+
+    // Countdown number
+    if (this.netPhase === 'countdown') {
+      const cd = Math.ceil(state.countdown as number);
+      this.overlayText.text = cd > 0 ? String(cd) : 'FIGHT!';
+    }
+
+    // HUD
+    if (this.netPhase === 'fighting' || this.netPhase === 'round_end') {
+      this.hud.update(
+        me?.hp ?? 0, opp?.hp ?? 0,
+        me?.energy ?? 0, opp?.energy ?? 0,
+        state.roundTimer ?? 0, state.round ?? 1,
+        me?.roundWins ?? 0, opp?.roundWins ?? 0,
+      );
+    }
+
+    this.p1Fighter.update(dt);
+    this.p2Fighter.update(dt);
+  }
+
+  // ── Local / NPC mode ──────────────────────────────────────────────────────
+
+  private setupLocalMode(npcId?: string) {
+    this.s1 = defaultFighterState();
+    this.s2 = defaultFighterState();
+    this.applyActiveCardLoadout();
+    this.actionRuntime = { p1: freshActionRuntime(), p2: freshActionRuntime() };
+
+    this.npcProfile = npcId ? NPC_ROSTER.find(n => n.id === npcId) ?? null : null;
+    this.npcRng = this.npcProfile ? npcRng(Date.now() & 0xfffffff) : null;
+
+    this.p1Input = new SwipeInput(window, 'left', m => this.queueMove('p1', m));
+    this.p2Input = new SwipeInput(window, 'right', m => this.queueMove('p2', m));
+    this.cleanupKb1 = bindKeyboard(KEYBOARD_MAP_P1, m => this.queueMove('p1', m));
+    this.cleanupKb2 = bindKeyboard(KEYBOARD_MAP_P2, m => this.queueMove('p2', m));
+
+    this.startCountdown();
   }
 
   // ── Ticker ────────────────────────────────────────────────────────────────
@@ -250,9 +445,19 @@ export class FightScene {
   private update(ticker: Ticker) {
     if (this.destroyed) return;
     const dt = ticker.deltaMS;
+    const { width: W, height: H } = this.ctx.app.screen;
 
     this.updateImpactShake(dt);
+    this.bankaiEffect.update(dt, W, H);
 
+    if (this.fightRoom !== null) {
+      this.updateNetwork(dt);
+    } else {
+      this.updateLocal(dt);
+    }
+  }
+
+  private updateLocal(dt: number) {
     if (this.phase === 'countdown') {
       this.countdown -= dt / 1000;
       this.overlayText.text = Math.ceil(this.countdown) > 0 ? String(Math.ceil(this.countdown)) : 'FIGHT!';
@@ -290,8 +495,6 @@ export class FightScene {
     const now = performance.now();
     if (now >= this.actionRuntime.p1.hitStopUntil) this.p1Fighter.update(dt);
     if (now >= this.actionRuntime.p2.hitStopUntil) this.p2Fighter.update(dt);
-    const { width: W, height: H } = this.ctx.app.screen;
-    this.bankaiEffect.update(dt, W, H);
   }
 
   private updateNpcInput(dt: number) {
@@ -304,18 +507,15 @@ export class FightScene {
     this.npcInputCooldown = tierDelay + jitter;
     this.queueMove('p2', npcAITick(
       this.npcProfile,
-      this.s2.hp,
-      this.s2.energy,
-      this.s1.hp,
-      this.s1.energy,
+      this.s2.hp, this.s2.energy,
+      this.s1.hp, this.s1.energy,
       this.npcRng,
     ));
   }
 
   private updateImpactShake(dt: number) {
     if (this.impactShakeMs <= 0) {
-      this.container.x = 0;
-      this.container.y = 0;
+      this.container.x = 0; this.container.y = 0;
       this.impactShakeStrength = 0;
       return;
     }
@@ -330,8 +530,7 @@ export class FightScene {
     this.impactShakeMs = Math.max(this.impactShakeMs, ms);
   }
 
-
-  // ── Input buffering + action timing ───────────────────────────────────────
+  // ── Input buffering ───────────────────────────────────────────────────────
 
   private queueMove(key: FighterKey, move: MoveType) {
     if (this.phase !== 'fighting' || !canBufferMove(move)) return;
@@ -342,7 +541,6 @@ export class FightScene {
       this.startTimedAction(key, move, now);
       return;
     }
-
     runtime.bufferedMove = move;
     runtime.bufferedAt = now;
   }
@@ -392,11 +590,11 @@ export class FightScene {
       state.isDodging = true;
       state.dodgeUntil = Date.now() + DODGE_IFRAME_MS;
       runtime.dodgeCooldownUntil = now + DODGE_COOLDOWN_MS;
-      // A tiny reposition makes spacing/punish clearer without adding platformer movement yet.
       fighter.container.x += key === 'p1' ? -34 : 34;
       this.after(timing.activeMs, () => {
         state.isDodging = false;
-        if ((fighter.animState === AnimState.BLOCK || fighter.animState === AnimState.DODGE) && state.hp > 0) fighter.animState = AnimState.IDLE;
+        if ((fighter.animState === AnimState.BLOCK || fighter.animState === AnimState.DODGE) && state.hp > 0)
+          fighter.animState = AnimState.IDLE;
       });
       this.scheduleAnimReset(key, state, fighter, timing.activeMs + timing.recoveryMs);
       return;
@@ -406,21 +604,19 @@ export class FightScene {
 
     this.after(timing.windupMs, () => {
       if (this.phase !== 'fighting' || state.hp <= 0) return;
-      if (key === 'p1') this.applyMoveWithVisuals(this.s1, this.s2, this.p1Fighter, this.p2Fighter, move, 'p1', 'right');
-      else this.applyMoveWithVisuals(this.s2, this.s1, this.p2Fighter, this.p1Fighter, move, 'p2', 'left');
+      if (key === 'p1')
+        this.applyMoveWithVisuals(this.s1, this.s2, this.p1Fighter, this.p2Fighter, move, 'p1', 'right');
+      else
+        this.applyMoveWithVisuals(this.s2, this.s1, this.p2Fighter, this.p1Fighter, move, 'p2', 'left');
     });
 
     this.scheduleAnimReset(key, state, fighter, timing.windupMs + timing.activeMs + timing.recoveryMs);
   }
 
-  // ── Move application with visual feedback ─────────────────────────────────
-
   private applyMoveWithVisuals(
-    attacker: FighterState, defender: FighterState,
+    attacker: LocalFighterState, defender: LocalFighterState,
     attackerFighter: Fighter, defenderFighter: Fighter,
-    move: MoveType,
-    attackerKey: 'p1' | 'p2',
-    dir: 'right' | 'left',
+    move: MoveType, attackerKey: 'p1' | 'p2', dir: 'right' | 'left',
   ) {
     const timing = MOVE_TIMINGS[move];
     const runtime = this.actionRuntime[attackerKey];
@@ -431,11 +627,12 @@ export class FightScene {
       return;
     }
 
-    // Show Bankai screen effect before resolving. It is powerful but has already paid
-    // the startup commitment before this active frame runs.
     if (move === MoveType.BANKAI && attacker.energy >= 100) {
       const { width: W, height: H } = this.ctx.app.screen;
-      this.bankaiEffect.fire(attackerFighter.container.x, attackerFighter.container.y - 30, dir, W, H, attacker.bankaiBeamWidthMult, attacker.bankaiLeavesZone);
+      this.bankaiEffect.fire(
+        attackerFighter.container.x, attackerFighter.container.y - 30,
+        dir, W, H, attacker.bankaiBeamWidthMult, attacker.bankaiLeavesZone,
+      );
       this.shake(10, 260);
     }
 
@@ -454,7 +651,6 @@ export class FightScene {
       return;
     }
 
-    // Defender hit flash + hit stop
     if (result.defenderHpDelta < 0) {
       const defKey: 'p1' | 'p2' = attackerKey === 'p1' ? 'p2' : 'p1';
       this.applyHitStop(attackerKey, defKey);
@@ -463,13 +659,11 @@ export class FightScene {
       this.scheduleAnimReset(defKey, defender, defenderFighter, timing.hitStunMs);
     }
 
-    if (defender.hp <= 0) {
-      defenderFighter.animState = AnimState.KO;
-    }
+    if (defender.hp <= 0) defenderFighter.animState = AnimState.KO;
   }
 
-  private isInRange(attacker: Fighter, defender: Fighter, rangePx: number): boolean {
-    return Math.abs(attacker.container.x - defender.container.x) <= rangePx;
+  private isInRange(a: Fighter, b: Fighter, rangePx: number): boolean {
+    return Math.abs(a.container.x - b.container.x) <= rangePx;
   }
 
   private flashWhiff(fighter: Fighter) {
@@ -483,12 +677,45 @@ export class FightScene {
     this.actionRuntime[defenderKey].hitStopUntil = Math.max(this.actionRuntime[defenderKey].hitStopUntil, until);
   }
 
-  // ── Round / match management ──────────────────────────────────────────────
+  private scheduleAnimReset(key: 'p1' | 'p2', state: LocalFighterState, fighter: Fighter, ms: number) {
+    const existing = this.animResets.get(key);
+    if (existing) clearTimeout(existing);
+    const id = setTimeout(() => {
+      this.animResets.delete(key);
+      if (!this.destroyed)
+        fighter.animState = state.hp <= 0 ? AnimState.KO : AnimState.IDLE;
+    }, ms);
+    this.animResets.set(key, id);
+  }
+
+  // ── Round management (local mode) ─────────────────────────────────────────
+
+  private startCountdown() {
+    this.phase = 'countdown';
+    this.countdown = COUNTDOWN_DURATION;
+    this.overlay.alpha = 0.5;
+    this.overlayText.text = String(this.countdown);
+    this.overlayText.style.fill = 0xffffff;
+    (this.overlayText.style as TextStyle).fontSize = 80;
+  }
+
+  private startRound() {
+    this.phase = 'fighting';
+    resetForRound(this.s1);
+    resetForRound(this.s2);
+    this.p1Fighter.animState = AnimState.IDLE;
+    this.p2Fighter.animState = AnimState.IDLE;
+    this.roundTimer = ROUND_DURATION;
+    this.actionRuntime.p1 = freshActionRuntime();
+    this.actionRuntime.p2 = freshActionRuntime();
+    this.roundEndScheduled = false;
+    this.overlay.alpha = 0;
+    this.overlayText.text = '';
+  }
 
   private endRound(winner: 1 | 2 | 'draw' | null) {
     this.phase = 'round_end';
-    let msg = 'DRAW!';
-    let color = 0xffffff;
+    let msg = 'DRAW!'; let color = 0xffffff;
     if (winner === 1) { msg = 'P1 WINS ROUND!'; color = 0x4a90d9; }
     else if (winner === 2) { msg = 'P2 WINS ROUND!'; color = 0xe05050; }
 
@@ -498,20 +725,19 @@ export class FightScene {
 
     const r = applyRoundWin(this.s1, this.s2, winner, this.round, ROUNDS_TO_WIN);
     if (r.matchOver) {
-      this.after(2000, () => this.showMatchEnd(r.matchWinner));
+      this.after(2000, () => this.showLocalMatchEnd(r.matchWinner));
     } else {
       this.round++;
       this.after(2000, () => this.startCountdown());
     }
   }
 
-  private showMatchEnd(winner: 1 | 2 | 'draw' | null) {
-    let msg = 'DRAW!';
-    let color = 0xffd700;
+  private showLocalMatchEnd(winner: 1 | 2 | 'draw' | null) {
+    let msg = 'DRAW!'; let color = 0xffd700;
+    const npcName = this.npcProfile?.name ?? 'P2';
     if (winner === 1) { msg = `${this.ctx.player?.username ?? 'P1'} WINS!`; color = 0x4a90d9; }
-    else if (winner === 2) { msg = `${this.npcProfile?.name ?? 'P2'} WINS!`; color = this.npcProfile?.outfitColor ?? 0xe05050; }
+    else if (winner === 2) { msg = `${npcName} WINS!`; color = this.npcProfile?.outfitColor ?? 0xe05050; }
 
-    // Winner plays Dance, loser stays in KO
     if (winner === 1) { this.p1Fighter.animState = AnimState.WIN; }
     else if (winner === 2) { this.p2Fighter.animState = AnimState.WIN; }
 
@@ -522,7 +748,7 @@ export class FightScene {
     this.overlayText.style.fill = color;
     (this.overlayText.style as TextStyle).fontSize = 72;
 
-    this.after(1500, () => this.showCardPicker());
+    this.after(1500, () => this.showLocalCardPicker());
   }
 
   private tryGrantNpcReward() {
@@ -535,7 +761,7 @@ export class FightScene {
     this.overlayText.text = `${this.ctx.player?.username ?? 'P1'} WINS!\nNPC reward unlocked`;
   }
 
-  private showCardPicker() {
+  private showLocalCardPicker() {
     if (this.destroyed) return;
     this.overlay.alpha = 0;
     this.overlayText.text = '';
@@ -550,13 +776,13 @@ export class FightScene {
       collection,
       (card: CardDefinition) => {
         if (this.destroyed) return;
-        void this.claimRewardAndReturn(card);
+        void this.claimLocalReward(card);
       },
     );
     this.container.addChild(this.cardPicker.container);
   }
 
-  private async claimRewardAndReturn(card: CardDefinition) {
+  private async claimLocalReward(card: CardDefinition) {
     const result = await claimCardRewardForPlayer(this.ctx.player, card.id);
     if (this.destroyed) return;
     this.cardPicker?.destroy();
@@ -578,44 +804,36 @@ export class FightScene {
       const card = getCardById(cardId);
       if (!card) return;
       switch (card.effectKey) {
-        case 'speedMult':
-          // Local fight movement timing is mostly animation/input based for now.
-          break;
         case 'heavyHit':
-          this.s1.attackMult *= card.value;
-          break;
-        case 'attackMult':
-          this.s1.attackMult *= card.value;
-          break;
-        case 'defenseMult':
-          this.s1.defenseMult *= card.value;
-          break;
-        case 'bankaiChargeRateMult':
-          this.s1.bankaiChargeRateMult *= card.value;
-          break;
-        case 'counterOnPerfectBlock':
-          this.s1.counterOnPerfectBlock = true;
-          break;
-        case 'lowAttackSlows':
-          this.s1.lowAttackSlows = true;
-          break;
-        case 'thirdHitKnockback':
-          this.s1.thirdHitKnockback = true;
-          break;
-        case 'bankaiBeamWidthMult':
-          this.s1.bankaiBeamWidthMult *= card.value;
-          break;
-        case 'bankaiActivateFaster':
-          // Timing hook exists in shared card data; combat timing adjustment can be tuned later.
-          break;
-        case 'bankaiLeavesZone':
-          this.s1.bankaiLeavesZone = true;
-          break;
-        case 'lowHpBankaiBoost':
-          // Applied later when Bankai damage gets a dedicated damage modifier hook.
-          break;
+        case 'attackMult':        this.s1.attackMult *= card.value; break;
+        case 'defenseMult':       this.s1.defenseMult *= card.value; break;
+        case 'bankaiChargeRateMult': this.s1.bankaiChargeRateMult *= card.value; break;
+        case 'counterOnPerfectBlock': this.s1.counterOnPerfectBlock = true; break;
+        case 'lowAttackSlows':    this.s1.lowAttackSlows = true; break;
+        case 'thirdHitKnockback': this.s1.thirdHitKnockback = true; break;
+        case 'bankaiBeamWidthMult': this.s1.bankaiBeamWidthMult *= card.value; break;
+        case 'bankaiLeavesZone':  this.s1.bankaiLeavesZone = true; break;
       }
     });
+  }
+
+  private drawControls(W: number, H: number) {
+    const hint1 = new Text({
+      text: 'P1: Q=Light  E=Heavy  S=Block  Space=Dodge  R=Bankai\nTouch: swipe to attack, hold=block',
+      style: new TextStyle({ fill: 0x888888, fontSize: 11 }),
+    });
+    hint1.x = 12;
+    hint1.y = H - 38;
+    this.container.addChild(hint1);
+
+    const hint2 = new Text({
+      text: 'P2: I=Light  O=Heavy  L=Block  Enter=Dodge  P=Bankai\nTiming > mashing',
+      style: new TextStyle({ fill: 0x888888, fontSize: 11, align: 'right' }),
+    });
+    hint2.anchor.set(1, 1);
+    hint2.x = W - 12;
+    hint2.y = H - 4;
+    this.container.addChild(hint2);
   }
 
   // ── Cleanup ───────────────────────────────────────────────────────────────
@@ -624,7 +842,6 @@ export class FightScene {
     if (this.destroyed) return;
     this.destroyed = true;
 
-    // Cancel all pending timeouts
     this.timeouts.forEach(id => clearTimeout(id));
     this.timeouts.clear();
     this.animResets.forEach(id => clearTimeout(id));
@@ -632,10 +849,21 @@ export class FightScene {
 
     this.ticker.stop();
     this.ticker.destroy();
-    this.p1Input.destroy();
-    this.p2Input.destroy();
-    this.cleanupKb1();
-    this.cleanupKb2();
+
+    // Network mode cleanup
+    this.netInput?.destroy();
+    this.netCleanupKb?.();
+    if (this.fightRoom) {
+      this.fightRoom.onLeave(() => undefined); // silence final event
+      void this.fightRoom.leave();
+    }
+
+    // Local mode cleanup
+    this.p1Input?.destroy();
+    this.p2Input?.destroy();
+    this.cleanupKb1?.();
+    this.cleanupKb2?.();
+
     this.cardPicker?.destroy();
     this.hud.destroy();
     this.bankaiEffect.destroy();
@@ -643,18 +871,5 @@ export class FightScene {
     this.p2Fighter.destroy();
     this.ctx.app.stage.removeChild(this.container);
     this.container.destroy({ children: true });
-  }
-}
-
-function moveToAnim(move: MoveType): AnimState {
-  switch (move) {
-    case MoveType.ATTACK:       return AnimState.ATTACK;
-    case MoveType.HIGH_ATTACK:  return AnimState.HIGH_ATTACK;
-    case MoveType.LOW_ATTACK:   return AnimState.LOW_ATTACK;
-    case MoveType.HEAVY_ATTACK: return AnimState.HEAVY_ATTACK;
-    case MoveType.BLOCK:        return AnimState.BLOCK;
-    case MoveType.DODGE:        return AnimState.DODGE;
-    case MoveType.BANKAI:       return AnimState.BANKAI;
-    default:                    return AnimState.IDLE;
   }
 }

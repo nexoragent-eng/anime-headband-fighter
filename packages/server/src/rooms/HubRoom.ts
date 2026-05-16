@@ -6,6 +6,8 @@ import { playerRepo } from '../db/database';
 export class HubRoom extends Room<HubRoomState> {
   maxClients = 100;
   private leaderboardInterval?: ReturnType<typeof setInterval>;
+  // sessionId → actual DB playerId (not stored in schema to keep bandwidth small)
+  private playerIds = new Map<string, string>();
 
   constructor(presence?: Presence) {
     super(presence);
@@ -31,7 +33,7 @@ export class HubRoom extends Room<HubRoomState> {
       target.challengeFrom = client.sessionId;
     });
 
-    this.onMessage('challenge_respond', (client: Client, data: { accept: boolean }) => {
+    this.onMessage('challenge_respond', async (client: Client, data: { accept: boolean }) => {
       const responder = this.state.players.get(client.sessionId);
       if (!responder || !responder.challengeFrom) return;
 
@@ -46,23 +48,41 @@ export class HubRoom extends Room<HubRoomState> {
       challenger.inFight = true;
       responder.inFight = true;
 
-      const roomId = `challenge-${Date.now()}`;
+      const challengerPlayerId = this.playerIds.get(challengerId) ?? challengerId;
+      const responderPlayerId = this.playerIds.get(client.sessionId) ?? client.sessionId;
       const challengerClient = this.clients.find(c => c.sessionId === challengerId);
-      challengerClient?.send('fight_found', { roomId });
-      client.send('fight_found', { roomId });
+
+      try {
+        const room = await matchMaker.createRoom('fight_room', {});
+        const resA = await matchMaker.reserveSeatFor(room, {
+          playerId: challengerPlayerId,
+          username: challenger.username,
+        });
+        const resB = await matchMaker.reserveSeatFor(room, {
+          playerId: responderPlayerId,
+          username: responder.username,
+        });
+        challengerClient?.send('fight_found', { reservation: resA });
+        client.send('fight_found', { reservation: resB });
+      } catch (e) {
+        console.error('[HubRoom] Failed to create fight room:', e);
+        challenger.inFight = false;
+        responder.inFight = false;
+      }
     });
 
     this.onMessage('queue_fight', async (client: Client) => {
       const player = this.state.players.get(client.sessionId);
       if (!player || player.inFight) return;
 
+      const playerId = this.playerIds.get(client.sessionId) ?? client.sessionId;
       const reservation = await matchMaker.joinOrCreate('fight_room', {
-        playerId: client.sessionId,
+        playerId,
         username: player.username,
       });
 
       player.inFight = true;
-      client.send('fight_found', { roomId: reservation.room.roomId });
+      client.send('fight_found', { reservation });
     });
   }
 
@@ -100,10 +120,12 @@ export class HubRoom extends Room<HubRoomState> {
     player.supportIndex = cos?.supportIndex ?? 0;
 
     this.state.players.set(client.sessionId, player);
+    this.playerIds.set(client.sessionId, options.playerId);
   }
 
   onLeave(client: Client) {
     const sessionId = client.sessionId;
+    this.playerIds.delete(sessionId);
     // Clear any pending challenges this player sent to others
     this.state.players.forEach(p => {
       if (p.challengeFrom === sessionId) p.challengeFrom = '';

@@ -105,7 +105,7 @@ async function main() {
           currentScene = new HubScene(ctx);
           break;
         case 'fight':
-          currentScene = new FightScene(ctx, opts as { roomId?: string; local?: boolean });
+          currentScene = new FightScene(ctx, opts as { reservation?: unknown; npcId?: string; local?: boolean });
           break;
         case 'locker':
           currentScene = new LockerRoomScene(ctx);

@@ -519,9 +519,9 @@ export class HubScene {
         this.removeOtherPlayer(sessionId);
       });
 
-      room.onMessage('fight_found', () => {
+      room.onMessage('fight_found', (data: { reservation: unknown }) => {
         this.hideChallengePopup();
-        this.showCountdown(() => this.ctx.switchScene('fight', { local: true }));
+        this.ctx.switchScene('fight', { reservation: data.reservation });
       });
     } catch {
       // Offline — hub works without a server connection
@@ -615,44 +615,6 @@ export class HubScene {
   private hideChallengePopup() {
     this.challengePopup?.remove();
     this.challengePopup = null;
-  }
-
-  private showCountdown(onDone: () => void) {
-    if (this.countdownOverlay) return;
-    const overlay = document.createElement('div');
-    overlay.style.cssText = [
-      'position:absolute;inset:0;background:rgba(0,0,0,.82);',
-      'display:flex;align-items:center;justify-content:center;',
-      'z-index:60;pointer-events:all;',
-    ].join('');
-
-    const num = document.createElement('div');
-    num.style.cssText = [
-      'color:#ffd700;font-size:120px;',
-      'font-family:Impact,Arial Black,sans-serif;font-weight:bold;',
-      'text-shadow:0 0 60px #ff6b35;transition:transform .15s ease,opacity .15s ease;',
-    ].join('');
-    overlay.appendChild(num);
-    document.getElementById('ui-layer')!.appendChild(overlay);
-    this.countdownOverlay = overlay;
-
-    const steps = ['3', '2', '1', 'FIGHT!'];
-    let i = 0;
-    const tick = () => {
-      if (i >= steps.length) {
-        overlay.remove();
-        this.countdownOverlay = null;
-        onDone();
-        return;
-      }
-      num.textContent = steps[i];
-      num.style.transform = 'scale(1.35)';
-      num.style.opacity = '1';
-      setTimeout(() => { num.style.transform = 'scale(1)'; num.style.opacity = '0.75'; }, 60);
-      i++;
-      setTimeout(tick, 1000);
-    };
-    tick();
   }
 
   private setupInput() {
@@ -1036,7 +998,7 @@ export class HubScene {
         const claimed = this.hasNpcReward(npc.id);
         actions.appendChild(
           this.makeBtn(`FIGHT ${npc.name}`, "#661111", "#ff4b2b", () =>
-            this.ctx.switchScene("fight", { local: true, npcId: npc.id }),
+            this.ctx.switchScene("fight", { npcId: npc.id }),
           ),
         );
         actions.appendChild(
@@ -1056,7 +1018,7 @@ export class HubScene {
       );
       actions.appendChild(
         this.makeBtn("CHALLENGE", "#aa2200", "#ff6b35", () =>
-          this.ctx.switchScene("fight", { local: true }),
+          this.ctx.switchScene("fight", {}),
         ),
       );
       actions.appendChild(
