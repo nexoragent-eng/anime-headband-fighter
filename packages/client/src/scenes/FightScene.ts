@@ -36,16 +36,12 @@ const MIN_SEP_PX     = 72;     // minimum centre-to-centre gap between fighters
 
 const LUNGE_PX: Partial<Record<MoveType, number>> = {
   [MoveType.ATTACK]:       20,
-  [MoveType.LOW_ATTACK]:   14,
-  [MoveType.HIGH_ATTACK]:  36,
   [MoveType.HEAVY_ATTACK]: 36,
 };
 
 // Spine playback speed per attack — light = snappy, heavy = weighty
 const ANIM_SPEED: Partial<Record<MoveType, number>> = {
   [MoveType.ATTACK]:       1.30,
-  [MoveType.LOW_ATTACK]:   1.20,
-  [MoveType.HIGH_ATTACK]:  0.80,
   [MoveType.HEAVY_ATTACK]: 0.80,
   [MoveType.BANKAI]:       0.85,
 };
@@ -78,8 +74,6 @@ function freshActionRuntime(): ActionRuntime {
 function moveToAnim(move: MoveType): AnimState {
   switch (move) {
     case MoveType.ATTACK:       return AnimState.ATTACK;
-    case MoveType.HIGH_ATTACK:  return AnimState.HIGH_ATTACK;
-    case MoveType.LOW_ATTACK:   return AnimState.LOW_ATTACK;
     case MoveType.HEAVY_ATTACK: return AnimState.HEAVY_ATTACK;
     case MoveType.BLOCK:        return AnimState.BLOCK;
     case MoveType.DODGE:        return AnimState.DODGE;
@@ -523,10 +517,10 @@ export class FightScene {
   // Tracks held movement keys and updates p1/p2MoveDir continuously.
   private bindLocalMovementKb(): () => void {
     const held = new Set<string>();
-    const P1L = new Set(['KeyA']);
-    const P1R = new Set(['KeyD']);
-    const P2L = new Set(['ArrowLeft']);
-    const P2R = new Set(['ArrowRight']);
+    const P1L = new Set(['ArrowLeft']);
+    const P1R = new Set(['ArrowRight']);
+    const P2L = new Set(['Numpad4']);
+    const P2R = new Set(['Numpad6']);
     const update = () => {
       this.p1MoveDir = [...P1L].some(k => held.has(k)) ? -1 : [...P1R].some(k => held.has(k)) ? 1 : 0;
       this.p2MoveDir = [...P2L].some(k => held.has(k)) ? -1 : [...P2R].some(k => held.has(k)) ? 1 : 0;
@@ -990,7 +984,7 @@ export class FightScene {
 
   private drawControls(W: number, H: number) {
     const hint1 = new Text({
-      text: 'P1: A/D=move  Q=Light  E=Heavy  S=Block  Space=Dodge  R=Bankai',
+      text: 'P1: ←/→=move  W=Heavy  S=Light  A=Dodge  D=Block  E=Bankai',
       style: new TextStyle({ fill: 0x888888, fontSize: 11 }),
     });
     hint1.x = 12;
@@ -998,7 +992,7 @@ export class FightScene {
     this.container.addChild(hint1);
 
     const hint2 = new Text({
-      text: 'P2: ←/→=move  I=Light  O=Heavy  L=Block  Enter=Dodge  P=Bankai',
+      text: 'P2: Num4/6=move  U=Heavy  J=Light  H=Dodge  K=Block  Y=Bankai',
       style: new TextStyle({ fill: 0x888888, fontSize: 11, align: 'right' }),
     });
     hint2.anchor.set(1, 1);

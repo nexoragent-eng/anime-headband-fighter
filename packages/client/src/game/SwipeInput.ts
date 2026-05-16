@@ -81,7 +81,7 @@ export class SwipeInput {
     if (absX > absY) {
       return dx > 0 ? MoveType.ATTACK : MoveType.DODGE;
     } else {
-      return dy < 0 ? MoveType.HIGH_ATTACK : MoveType.LOW_ATTACK;
+      return dy < 0 ? MoveType.HEAVY_ATTACK : MoveType.ATTACK;
     }
   }
 
@@ -116,20 +116,20 @@ export function bindKeyboard(
   };
 }
 
-// P1: Q=light  E=heavy  S=block  Space=dodge  R=bankai
+// P1: arrows=move  W=heavy  S=light  A=dodge  D=block  E=bankai
 export const KEYBOARD_MAP_P1: Record<string, MoveType> = {
-  KeyQ: MoveType.ATTACK,
-  KeyE: MoveType.HEAVY_ATTACK,
-  KeyS: MoveType.BLOCK,
-  Space: MoveType.DODGE,
-  KeyR: MoveType.BANKAI,
+  KeyW: MoveType.HEAVY_ATTACK,
+  KeyS: MoveType.ATTACK,
+  KeyA: MoveType.DODGE,
+  KeyD: MoveType.BLOCK,
+  KeyE: MoveType.BANKAI,
 };
 
-// P2: I=light  O=heavy  L=block  Enter=dodge  P=bankai
+// P2 (2-player local): Num4/6=move  U=heavy  J=light  H=dodge  K=block  Y=bankai
 export const KEYBOARD_MAP_P2: Record<string, MoveType> = {
-  KeyI: MoveType.ATTACK,
-  KeyO: MoveType.HEAVY_ATTACK,
-  KeyL: MoveType.BLOCK,
-  Enter: MoveType.DODGE,
-  KeyP: MoveType.BANKAI,
+  KeyU: MoveType.HEAVY_ATTACK,
+  KeyJ: MoveType.ATTACK,
+  KeyH: MoveType.DODGE,
+  KeyK: MoveType.BLOCK,
+  KeyY: MoveType.BANKAI,
 };

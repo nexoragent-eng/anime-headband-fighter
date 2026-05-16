@@ -206,33 +206,28 @@ export function npcAITick(
     return MoveType.BLOCK;
   }
 
-  // Pick an attack variant based on style
+  // Pick an attack based on style (only light and heavy exist)
   const r = rng();
   switch (npc.style) {
     case 'aggressive':
-      if (r < 0.55) return MoveType.ATTACK;
-      if (r < 0.75) return MoveType.HIGH_ATTACK;
-      if (r < 0.88) return MoveType.LOW_ATTACK;
+      if (r < 0.60) return MoveType.ATTACK;
+      if (r < 0.85) return MoveType.HEAVY_ATTACK;
       return MoveType.NONE;
 
     case 'defensive':
-      if (r < 0.35) return MoveType.ATTACK;
-      if (r < 0.50) return MoveType.HIGH_ATTACK;
-      if (r < 0.60) return MoveType.LOW_ATTACK;
+      if (r < 0.50) return MoveType.ATTACK;
+      if (r < 0.65) return MoveType.HEAVY_ATTACK;
       return MoveType.NONE;
 
     case 'balanced':
-      if (r < 0.40) return MoveType.ATTACK;
-      if (r < 0.60) return MoveType.HIGH_ATTACK;
-      if (r < 0.75) return MoveType.LOW_ATTACK;
+      if (r < 0.55) return MoveType.ATTACK;
+      if (r < 0.75) return MoveType.HEAVY_ATTACK;
       return MoveType.NONE;
 
     case 'trickster': {
-      const opHpRatio = opponentHp / 100;
-      if (r < 0.30) return opHpRatio > 0.5 ? MoveType.LOW_ATTACK : MoveType.HIGH_ATTACK;
-      if (r < 0.55) return MoveType.ATTACK;
-      if (r < 0.65) return MoveType.HIGH_ATTACK;
-      if (r < 0.72) return MoveType.LOW_ATTACK;
+      // alternates more unpredictably
+      if (r < 0.45) return MoveType.ATTACK;
+      if (r < 0.70) return MoveType.HEAVY_ATTACK;
       return MoveType.NONE;
     }
   }
