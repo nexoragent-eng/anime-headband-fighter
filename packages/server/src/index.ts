@@ -12,7 +12,32 @@ import { normalizeCardCollection } from '@ahf/shared';
 const PORT = parseInt(process.env.PORT ?? '2567', 10);
 
 const app = express();
-app.use(cors());
+const allowedOrigins = [
+  'https://anime.futuredays.nl',
+  'http://localhost:5173',
+  'http://localhost:4173',
+];
+
+const corsOptions: cors.CorsOptions = {
+  origin(origin, callback) {
+    // Allow server-to-server tools/curl without browser Origin
+    if (!origin) return callback(null, true);
+
+    if (allowedOrigins.includes(origin)) {
+      return callback(null, true);
+    }
+
+    return callback(new Error(`CORS blocked for origin: ${origin}`));
+  },
+  methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization'],
+  credentials: true,
+  optionsSuccessStatus: 204,
+};
+
+app.use(cors(corsOptions));
+app.options(/.*/, cors(corsOptions));
+
 app.use(express.json());
 
 // Health check
