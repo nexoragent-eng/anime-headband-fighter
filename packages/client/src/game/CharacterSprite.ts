@@ -35,7 +35,7 @@ const ANIM_MAP: Record<AnimState, string> = {
   [AnimState.LOW_ATTACK]:   'PunchAttack',
   [AnimState.HEAVY_ATTACK]: 'SwordAttack',
   [AnimState.BLOCK]:        'Idle',
-  [AnimState.DODGE]:        'Jump Loop',
+  [AnimState.DODGE]:        'Jump',
   [AnimState.HIT]:          'Hit',
   [AnimState.KO]:           'Death',
   [AnimState.BANKAI]:       'MagicAttack',
@@ -206,6 +206,15 @@ export class CharacterSprite {
     const animName = ANIM_MAP[state];
     const current = this.spine.state.tracks[0];
     if (current?.animation?.name === animName) return;
+
+    // Guard: if the animation doesn't exist in the skeleton, fall back to Idle
+    // rather than breaking the entire Spine track state.
+    const exists = this.spine.state.data.skeletonData.findAnimation(animName);
+    if (!exists) {
+      if (current?.animation?.name !== 'Idle')
+        this.spine.state.setAnimation(0, 'Idle', true);
+      return;
+    }
 
     if (LOOPING.has(state)) {
       this.spine.state.setAnimation(0, animName, true);
