@@ -53,6 +53,7 @@ async function main() {
     },
   };
 
+  if (location.hostname === 'localhost') (window as unknown as Record<string, unknown>).__ahf = ctx;
   ctx.switchScene('login');
 }
 

@@ -6,7 +6,7 @@ export class BankaiEffect {
   private flash: Graphics;
   private label: Text;
   private active = false;
-  private progress = 0; // 0-1
+  private progress = 0;
   private dir: 'right' | 'left';
   private originX = 0;
   private originY = 0;
@@ -30,16 +30,12 @@ export class BankaiEffect {
     this.label = new Text({
       text: 'BANKAI!!!',
       style: new TextStyle({
-        fill: ['#ffffff', '#ffff00'],
+        fill: 0xffffff,
         fontFamily: 'Impact, Arial Black, sans-serif',
         fontSize: 48,
         fontWeight: 'bold',
         stroke: { color: '#ff0000', width: 6 },
-        dropShadow: true,
-        dropShadowColor: '#ff6600',
-        dropShadowBlur: 30,
-        dropShadowDistance: 0,
-        dropShadowAngle: 0,
+        dropShadow: { blur: 30, color: '#ff6600', distance: 0, angle: 0 },
       }),
     });
     this.label.anchor.set(0.5);
@@ -56,6 +52,7 @@ export class BankaiEffect {
     beamWidthMult = 1,
     leaveZone = false,
   ) {
+    void screenH;
     this.dir = dir;
     this.originX = x;
     this.originY = y;
@@ -65,7 +62,7 @@ export class BankaiEffect {
     this.leaveZone = leaveZone;
 
     this.label.x = screenW / 2;
-    this.label.y = screenH * 0.2;
+    this.label.y = screenW * 0.2;
     this.label.alpha = 1;
     this.label.scale.set(0.3);
 
@@ -77,7 +74,6 @@ export class BankaiEffect {
 
   update(dt: number, screenW: number, screenH: number) {
     if (!this.active) {
-      // update burn zone if present
       if (this.burnZone) {
         this.burnTimer -= dt;
         this.burnZone.alpha = Math.max(0, this.burnTimer / 1500);
@@ -91,7 +87,6 @@ export class BankaiEffect {
 
     this.progress += dt * 0.0025;
 
-    // flash phase 0-0.2
     if (this.progress < 0.2) {
       const t = this.progress / 0.2;
       this.flash.clear();
@@ -99,9 +94,7 @@ export class BankaiEffect {
       this.flash.alpha = 1;
       this.beam.alpha = 0;
       this.label.scale.set(0.3 + t * 0.7);
-    }
-    // beam phase 0.2-0.7
-    else if (this.progress < 0.7) {
+    } else if (this.progress < 0.7) {
       const t = (this.progress - 0.2) / 0.5;
       this.flash.alpha = Math.max(0, 0.8 - t * 2);
 
@@ -110,14 +103,12 @@ export class BankaiEffect {
       const dx = this.dir === 'right' ? 1 : -1;
 
       this.beam.clear();
-      // core beam
       this.beam.rect(
         dx > 0 ? this.originX : this.originX - beamLen,
         this.originY - beamH / 2,
         beamLen,
         beamH,
       ).fill({ color: 0xffffff, alpha: 0.95 });
-      // glow layer
       this.beam.rect(
         dx > 0 ? this.originX : this.originX - beamLen,
         this.originY - beamH,
@@ -127,9 +118,7 @@ export class BankaiEffect {
       this.beam.alpha = 1;
 
       this.label.alpha = 1 - t * 0.8;
-    }
-    // fade out 0.7-1.0
-    else {
+    } else {
       const t = (this.progress - 0.7) / 0.3;
       this.beam.alpha = 1 - t;
       this.flash.alpha = 0;
@@ -138,7 +127,6 @@ export class BankaiEffect {
       if (this.progress >= 1) {
         this.active = false;
         this.beam.alpha = 0;
-
         if (this.leaveZone) {
           this.spawnBurnZone(screenW, screenH);
         }
@@ -147,6 +135,7 @@ export class BankaiEffect {
   }
 
   private spawnBurnZone(screenW: number, screenH: number) {
+    void screenH;
     this.burnZone = new Graphics();
     const beamH = 60 * this.beamWidthMult;
     const dx = this.dir === 'right' ? 1 : -1;

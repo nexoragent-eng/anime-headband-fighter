@@ -78,7 +78,7 @@ export class CardPickerUI {
       cardContainer.y = 90 + i * (cardH + 12);
       cardContainer.eventMode = 'static';
       cardContainer.cursor = 'pointer';
-      cardContainer.on('pointerdown', () => {
+      (cardContainer as any).on('pointerdown', () => {
         if (this.p1Pick) return;
         this.p1Pick = card;
         this.highlightCard(cardContainer, cardW, cardH, true);
@@ -93,7 +93,7 @@ export class CardPickerUI {
       cardContainer.y = 90 + i * (cardH + 12);
       cardContainer.eventMode = 'static';
       cardContainer.cursor = 'pointer';
-      cardContainer.on('pointerdown', () => {
+      (cardContainer as any).on('pointerdown', () => {
         if (this.p2Pick) return;
         this.p2Pick = card;
         this.highlightCard(cardContainer, cardW, cardH, false);

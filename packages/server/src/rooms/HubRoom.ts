@@ -1,40 +1,45 @@
 import { Room, Client, matchMaker } from 'colyseus';
-import { HubRoomState, HubPlayer, ActiveFightInfo, LeaderEntry } from '../schemas/HubState';
+import type { Presence } from 'colyseus';
+import { HubRoomState, HubPlayer, LeaderEntry } from '../schemas/HubState';
 import { playerRepo } from '../db/database';
-import { HEADBAND_TIERS, HEADBAND_RANKS } from '@ahf/shared';
 
 export class HubRoom extends Room<HubRoomState> {
   maxClients = 100;
   private leaderboardInterval?: ReturnType<typeof setInterval>;
+
+  constructor(presence?: Presence) {
+    super(presence);
+  }
 
   onCreate() {
     this.setState(new HubRoomState());
     this.refreshLeaderboard();
     this.leaderboardInterval = setInterval(() => this.refreshLeaderboard(), 10_000);
 
-    this.onMessage('move', (client, data: { x: number; y: number }) => {
+    this.onMessage('move', (client: Client, data: { x: number; y: number }) => {
       const player = this.state.players.get(client.sessionId);
       if (!player || player.inFight) return;
       player.x = Math.max(0, Math.min(800, data.x));
       player.y = Math.max(0, Math.min(600, data.y));
     });
 
-    this.onMessage('queue_fight', async (client) => {
-      const session = this.state.players.get(client.sessionId);
-      if (!session || session.inFight) return;
+    this.onMessage('queue_fight', async (client: Client) => {
+      const player = this.state.players.get(client.sessionId);
+      if (!player || player.inFight) return;
 
-      const room = await matchMaker.joinOrCreate('fight_room', {
-        playerId: session.playerId ?? client.sessionId,
-        username: session.username,
+      const reservation = await matchMaker.joinOrCreate('fight_room', {
+        playerId: client.sessionId,
+        username: player.username,
       });
 
-      session.inFight = true;
-      client.send('fight_found', { roomId: room.roomId });
+      player.inFight = true;
+      client.send('fight_found', { roomId: reservation.room.roomId });
     });
   }
 
-  async onJoin(client: Client, options: { playerId: string; username: string }) {
+  onJoin(client: Client, options: { playerId: string; username: string }) {
     const dbPlayer = playerRepo.findById(options.playerId);
+    const top3ids = playerRepo.getLeaderboard(3).map(p => p.id);
 
     const player = new HubPlayer();
     player.sessionId = client.sessionId;
@@ -45,10 +50,7 @@ export class HubRoom extends Room<HubRoomState> {
     player.x = 200 + Math.random() * 400;
     player.y = 200 + Math.random() * 200;
     player.inFight = false;
-
-    const leaderboard = playerRepo.getLeaderboard(3);
-    const rankIdx = leaderboard.findIndex(p => p.id === options.playerId);
-    player.headbandRank = rankIdx >= 0 ? rankIdx + 1 : 0;
+    player.headbandRank = top3ids.indexOf(options.playerId) + 1; // 0 if not in top 3
 
     this.state.players.set(client.sessionId, player);
   }
@@ -59,20 +61,15 @@ export class HubRoom extends Room<HubRoomState> {
 
   private refreshLeaderboard() {
     const top = playerRepo.getLeaderboard(10);
-    this.state.leaderboard = top.map((p, i) => {
+    const entries = top.map((p, i) => {
       const entry = new LeaderEntry();
       entry.username = p.username;
       entry.rankPoints = p.rank_points;
       entry.position = i + 1;
       return entry;
-    }) as any;
-
-    // update headband ranks
-    const top3ids = top.slice(0, 3).map(p => p.id);
-    this.state.players.forEach((player) => {
-      const idx = top3ids.indexOf((player as any).playerId ?? '');
-      player.headbandRank = idx >= 0 ? idx + 1 : 0;
     });
+    this.state.leaderboard.length = 0;
+    entries.forEach(e => this.state.leaderboard.push(e));
   }
 
   onDispose() {

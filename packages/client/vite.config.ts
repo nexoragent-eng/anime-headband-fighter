@@ -1,5 +1,6 @@
 import { defineConfig } from 'vite';
 import path from 'path';
+/// <reference types="vitest" />
 
 export default defineConfig({
   resolve: {
@@ -22,5 +23,12 @@ export default defineConfig({
   },
   define: {
     __SERVER_URL__: JSON.stringify(process.env.VITE_SERVER_URL ?? 'ws://localhost:2567'),
+  },
+  test: {
+    environment: 'node',
+    include: ['src/**/__tests__/**/*.test.ts'],
+    alias: {
+      '@ahf/shared': path.resolve(__dirname, '../shared/src'),
+    },
   },
 });

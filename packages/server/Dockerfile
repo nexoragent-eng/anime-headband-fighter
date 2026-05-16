@@ -1,10 +1,11 @@
 FROM node:20-alpine AS builder
 WORKDIR /app
 RUN npm install -g pnpm
-COPY ../../package.json ../../pnpm-workspace.yaml ./
-COPY ../../packages/shared ./packages/shared
+COPY package.json pnpm-workspace.yaml ./
+COPY packages/shared/package.json ./packages/shared/
 COPY packages/server/package.json ./packages/server/
 RUN pnpm install --filter @ahf/shared --filter @ahf/server
+COPY packages/shared ./packages/shared
 COPY packages/server ./packages/server
 RUN pnpm --filter @ahf/shared build
 RUN pnpm --filter @ahf/server build

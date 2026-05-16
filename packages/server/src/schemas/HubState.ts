@@ -1,4 +1,4 @@
-import { Schema, MapSchema, type } from '@colyseus/schema';
+import { Schema, MapSchema, ArraySchema, type } from '@colyseus/schema';
 
 export class HubPlayer extends Schema {
   @type('string') sessionId = '';
@@ -9,16 +9,7 @@ export class HubPlayer extends Schema {
   @type('number') x = 400;
   @type('number') y = 300;
   @type('boolean') inFight = false;
-  @type('number') headbandRank = 0; // 1=gold, 2=silver, 3=bronze, 0=none
-}
-
-export class ActiveFightInfo extends Schema {
-  @type('string') roomId = '';
-  @type('string') playerAName = '';
-  @type('string') playerBName = '';
-  @type('number') playerAHp = 100;
-  @type('number') playerBHp = 100;
-  @type('number') round = 1;
+  @type('number') headbandRank = 0;
 }
 
 export class LeaderEntry extends Schema {
@@ -29,6 +20,5 @@ export class LeaderEntry extends Schema {
 
 export class HubRoomState extends Schema {
   @type({ map: HubPlayer }) players = new MapSchema<HubPlayer>();
-  @type(ActiveFightInfo) featuredFight = new ActiveFightInfo();
-  @type([LeaderEntry]) leaderboard: LeaderEntry[] = [];
+  @type([LeaderEntry]) leaderboard = new ArraySchema<LeaderEntry>();
 }

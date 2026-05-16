@@ -1,48 +1,6 @@
-import Database from 'better-sqlite3';
+import fs from 'fs';
 import path from 'path';
-import { DEFAULT_STATS, RANK } from '@ahf/shared';
-
-const DB_PATH = process.env.DB_PATH ?? path.join(__dirname, '../../game.db');
-
-let db: Database.Database;
-
-export function getDb(): Database.Database {
-  if (!db) {
-    db = new Database(DB_PATH);
-    db.pragma('journal_mode = WAL');
-    migrate(db);
-  }
-  return db;
-}
-
-function migrate(db: Database.Database) {
-  db.exec(`
-    CREATE TABLE IF NOT EXISTS players (
-      id TEXT PRIMARY KEY,
-      username TEXT UNIQUE NOT NULL,
-      rank_points INTEGER NOT NULL DEFAULT ${RANK.DEFAULT},
-      hair_style INTEGER NOT NULL DEFAULT 0,
-      outfit_color TEXT NOT NULL DEFAULT '#4a90d9',
-      aura_color TEXT NOT NULL DEFAULT '#7b2fff',
-      character_name TEXT NOT NULL DEFAULT '',
-      current_run_cards TEXT NOT NULL DEFAULT '[]',
-      fights_in_current_run INTEGER NOT NULL DEFAULT 0,
-      created_at INTEGER NOT NULL,
-      updated_at INTEGER NOT NULL
-    );
-
-    CREATE TABLE IF NOT EXISTS fights (
-      id TEXT PRIMARY KEY,
-      player_a_id TEXT NOT NULL,
-      player_b_id TEXT,
-      winner_id TEXT,
-      rounds_a INTEGER NOT NULL DEFAULT 0,
-      rounds_b INTEGER NOT NULL DEFAULT 0,
-      started_at INTEGER NOT NULL,
-      ended_at INTEGER
-    );
-  `);
-}
+import { RANK } from '@ahf/shared';
 
 export interface DbPlayer {
   id: string;
@@ -52,49 +10,99 @@ export interface DbPlayer {
   outfit_color: string;
   aura_color: string;
   character_name: string;
-  current_run_cards: string;
+  current_run_cards: string; // JSON array
   fights_in_current_run: number;
   created_at: number;
   updated_at: number;
 }
 
+interface DbSchema {
+  players: DbPlayer[];
+}
+
+const DB_PATH = process.env.DB_PATH ?? path.join(process.cwd(), 'game.db.json');
+
+let data: DbSchema = { players: [] };
+let saveTimer: ReturnType<typeof setTimeout> | null = null;
+
+export function initDb() {
+  if (fs.existsSync(DB_PATH)) {
+    try {
+      data = JSON.parse(fs.readFileSync(DB_PATH, 'utf8'));
+    } catch {
+      data = { players: [] };
+    }
+  }
+}
+
+function scheduleSave() {
+  if (saveTimer) return;
+  saveTimer = setTimeout(() => {
+    saveTimer = null;
+    fs.writeFileSync(DB_PATH, JSON.stringify(data, null, 2), 'utf8');
+  }, 500);
+}
+
 export const playerRepo = {
   create(id: string, username: string): DbPlayer {
     const now = Date.now();
-    getDb().prepare(`
-      INSERT INTO players (id, username, rank_points, hair_style, outfit_color, aura_color, character_name, current_run_cards, fights_in_current_run, created_at, updated_at)
-      VALUES (?, ?, ?, 0, '#4a90d9', '#7b2fff', ?, '[]', 0, ?, ?)
-    `).run(id, username, username, now, now);
-    return playerRepo.findById(id)!;
+    const player: DbPlayer = {
+      id,
+      username,
+      rank_points: RANK.DEFAULT,
+      hair_style: 0,
+      outfit_color: '#4a90d9',
+      aura_color: '#7b2fff',
+      character_name: username,
+      current_run_cards: '[]',
+      fights_in_current_run: 0,
+      created_at: now,
+      updated_at: now,
+    };
+    data.players.push(player);
+    scheduleSave();
+    return player;
   },
 
   findById(id: string): DbPlayer | undefined {
-    return getDb().prepare('SELECT * FROM players WHERE id = ?').get(id) as DbPlayer | undefined;
+    return data.players.find(p => p.id === id);
   },
 
   findByUsername(username: string): DbPlayer | undefined {
-    return getDb().prepare('SELECT * FROM players WHERE username = ?').get(username) as DbPlayer | undefined;
+    return data.players.find(p => p.username === username);
   },
 
   updateRank(id: string, delta: number) {
-    const now = Date.now();
-    getDb().prepare('UPDATE players SET rank_points = rank_points + ?, updated_at = ? WHERE id = ?').run(delta, now, id);
+    const p = data.players.find(p => p.id === id);
+    if (!p) return;
+    p.rank_points = Math.max(0, p.rank_points + delta);
+    p.updated_at = Date.now();
+    scheduleSave();
   },
 
   updateCosmetics(id: string, hairStyle: number, outfitColor: string, auraColor: string, characterName: string) {
-    const now = Date.now();
-    getDb().prepare(`
-      UPDATE players SET hair_style = ?, outfit_color = ?, aura_color = ?, character_name = ?, updated_at = ? WHERE id = ?
-    `).run(hairStyle, outfitColor, auraColor, characterName, now, id);
+    const p = data.players.find(p => p.id === id);
+    if (!p) return;
+    p.hair_style = hairStyle;
+    p.outfit_color = outfitColor;
+    p.aura_color = auraColor;
+    p.character_name = characterName;
+    p.updated_at = Date.now();
+    scheduleSave();
   },
 
   updateRunState(id: string, cards: string[], fightsInRun: number) {
-    const now = Date.now();
-    getDb().prepare('UPDATE players SET current_run_cards = ?, fights_in_current_run = ?, updated_at = ? WHERE id = ?')
-      .run(JSON.stringify(cards), fightsInRun, now, id);
+    const p = data.players.find(p => p.id === id);
+    if (!p) return;
+    p.current_run_cards = JSON.stringify(cards);
+    p.fights_in_current_run = fightsInRun;
+    p.updated_at = Date.now();
+    scheduleSave();
   },
 
   getLeaderboard(limit = 10): DbPlayer[] {
-    return getDb().prepare('SELECT * FROM players ORDER BY rank_points DESC LIMIT ?').all(limit) as DbPlayer[];
+    return [...data.players]
+      .sort((a, b) => b.rank_points - a.rank_points)
+      .slice(0, limit);
   },
 };

@@ -1,6 +1,5 @@
 import { Container, Graphics, Text, TextStyle } from 'pixi.js';
 import type { GameContext } from '../main';
-import { SERVER_URL } from '../main';
 import type { PlayerProfile } from '@ahf/shared';
 
 export class LoginScene {
@@ -21,21 +20,15 @@ export class LoginScene {
     bg.rect(0, 0, width, height).fill(0x0a0a1a);
     this.container.addChild(bg);
 
-    // Title text
     const title = new Text({
       text: '⚔ ANIME\nHEADBAND\nFIGHTER',
       style: new TextStyle({
-        fill: ['#ff6b35', '#ffd700'],
-        fillGradientType: 'linear' as any,
+        fill: 0xff6b35,
         fontFamily: 'Impact, Arial Black, sans-serif',
         fontSize: Math.min(width * 0.12, 72),
         fontWeight: 'bold',
         align: 'center',
-        dropShadow: true,
-        dropShadowColor: '#ff0000',
-        dropShadowBlur: 20,
-        dropShadowAngle: 0,
-        dropShadowDistance: 0,
+        dropShadow: { blur: 20, color: '#ff0000', distance: 0, angle: 0 },
         stroke: { color: '#000000', width: 4 },
         letterSpacing: 4,
       }),
@@ -45,7 +38,6 @@ export class LoginScene {
     title.y = height * 0.28;
     this.container.addChild(title);
 
-    // Decorative ring
     const ring = new Graphics();
     ring.circle(width / 2, height * 0.28, Math.min(width, height) * 0.22)
       .stroke({ color: 0xff6b35, width: 3, alpha: 0.3 });
@@ -55,7 +47,7 @@ export class LoginScene {
   }
 
   private buildUI(): HTMLDivElement {
-    const { width, height } = this.ctx.app.screen;
+    const { height } = this.ctx.app.screen;
     const div = document.createElement('div');
     div.style.cssText = `
       position: absolute; top: 0; left: 0; width: 100%; height: 100%;
@@ -82,8 +74,7 @@ export class LoginScene {
     input.style.cssText = `
       width: 100%; padding: 12px 16px; border-radius: 10px;
       border: 2px solid rgba(255,107,53,0.5); background: rgba(255,255,255,0.07);
-      color: #fff; font-size: 18px; outline: none; text-align: center;
-      font-family: inherit;
+      color: #fff; font-size: 18px; outline: none; text-align: center; font-family: inherit;
     `;
     input.addEventListener('focus', () => { input.style.borderColor = '#ff6b35'; });
     input.addEventListener('blur', () => { input.style.borderColor = 'rgba(255,107,53,0.5)'; });
@@ -97,8 +88,8 @@ export class LoginScene {
       width: 100%; padding: 14px; border-radius: 10px; border: none; cursor: pointer;
       background: linear-gradient(135deg, #ff6b35, #ff0000);
       color: #fff; font-size: 16px; font-weight: bold; letter-spacing: 2px;
-      text-transform: uppercase; transition: transform 0.1s, opacity 0.1s;
-      font-family: inherit; box-shadow: 0 4px 20px rgba(255,107,53,0.4);
+      text-transform: uppercase; transition: transform 0.1s; font-family: inherit;
+      box-shadow: 0 4px 20px rgba(255,107,53,0.4);
     `;
     btn.addEventListener('mouseover', () => { btn.style.transform = 'scale(1.02)'; });
     btn.addEventListener('mouseleave', () => { btn.style.transform = 'scale(1)'; });
@@ -128,13 +119,13 @@ export class LoginScene {
           body: JSON.stringify({ username: name }),
         });
         if (!res.ok) {
-          const data = await res.json();
+          const data = await res.json() as { error?: string };
           error.textContent = data.error ?? 'Server error';
           btn.disabled = false;
           btn.textContent = 'ENTER THE ARENA';
           return;
         }
-        const player: PlayerProfile = await res.json();
+        const player = await res.json() as PlayerProfile;
         this.ctx.player = player;
         this.ctx.switchScene('hub');
       } catch {
@@ -145,7 +136,7 @@ export class LoginScene {
     };
 
     btn.addEventListener('click', login);
-    input.addEventListener('keydown', e => { if (e.key === 'Enter') login(); });
+    input.addEventListener('keydown', e => { if (e.key === 'Enter') void login(); });
 
     localFightBtn.addEventListener('click', () => {
       this.ctx.player = {

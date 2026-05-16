@@ -1,5 +1,7 @@
-import { Schema, MapSchema, type, ArraySchema } from '@colyseus/schema';
-import { AnimState, FightPhase } from '@ahf/shared';
+import { Schema, ArraySchema, type } from '@colyseus/schema';
+import { AnimState } from '@ahf/shared';
+import type { FightPhase } from '@ahf/shared';
+import { FightPhase as FP } from '@ahf/shared';
 
 export class FighterState extends Schema {
   @type('string') playerId = '';
@@ -32,7 +34,7 @@ export class CardOption extends Schema {
 }
 
 export class FightRoomState extends Schema {
-  @type('string') phase: FightPhase = FightPhase.WAITING;
+  @type('string') phase: string = FP.WAITING;
   @type('number') round = 1;
   @type('number') roundTimer = 20;
   @type('number') countdown = 3;

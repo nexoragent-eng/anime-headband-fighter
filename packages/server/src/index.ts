@@ -5,7 +5,7 @@ import { Server } from 'colyseus';
 import { monitor } from '@colyseus/monitor';
 import { HubRoom } from './rooms/HubRoom';
 import { FightRoom } from './rooms/FightRoom';
-import { getDb, playerRepo } from './db/database';
+import { initDb, playerRepo } from './db/database';
 import { v4 as uuidv4 } from 'uuid';
 
 const PORT = parseInt(process.env.PORT ?? '2567', 10);
@@ -74,7 +74,7 @@ if (process.env.NODE_ENV !== 'production') {
   app.use('/colyseus', monitor());
 }
 
+initDb();
 gameServer.listen(PORT).then(() => {
   console.log(`[AHF] Server running on ws://localhost:${PORT}`);
-  getDb(); // init DB
 });
