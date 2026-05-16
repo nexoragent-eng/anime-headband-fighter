@@ -57,10 +57,20 @@ export class HubRoom extends Room<HubRoomState> {
         const resA = await matchMaker.reserveSeatFor(room, {
           playerId: challengerPlayerId,
           username: challenger.username,
+          bodyObject: challenger.bodyObject, headObject: challenger.headObject,
+          hairObject: challenger.hairObject, handObject: challenger.handObject,
+          cloakObject: challenger.cloakObject, eyeType: challenger.eyeType,
+          makeupIndex: challenger.makeupIndex, supportIndex: challenger.supportIndex,
+          auraColor: challenger.auraColor,
         });
         const resB = await matchMaker.reserveSeatFor(room, {
           playerId: responderPlayerId,
           username: responder.username,
+          bodyObject: responder.bodyObject, headObject: responder.headObject,
+          hairObject: responder.hairObject, handObject: responder.handObject,
+          cloakObject: responder.cloakObject, eyeType: responder.eyeType,
+          makeupIndex: responder.makeupIndex, supportIndex: responder.supportIndex,
+          auraColor: responder.auraColor,
         });
         challengerClient?.send('fight_found', { reservation: resA });
         client.send('fight_found', { reservation: resB });
@@ -79,6 +89,11 @@ export class HubRoom extends Room<HubRoomState> {
       const reservation = await matchMaker.joinOrCreate('fight_room', {
         playerId,
         username: player.username,
+        bodyObject: player.bodyObject, headObject: player.headObject,
+        hairObject: player.hairObject, handObject: player.handObject,
+        cloakObject: player.cloakObject, eyeType: player.eyeType,
+        makeupIndex: player.makeupIndex, supportIndex: player.supportIndex,
+        auraColor: player.auraColor,
       });
 
       player.inFight = true;

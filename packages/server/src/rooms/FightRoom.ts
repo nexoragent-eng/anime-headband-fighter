@@ -75,7 +75,12 @@ export class FightRoom extends Room<FightRoomState> {
     });
   }
 
-  onJoin(client: Client, options: { playerId: string; username: string }) {
+  onJoin(client: Client, options: {
+    playerId: string; username: string;
+    bodyObject?: number; headObject?: number; hairObject?: number;
+    handObject?: number; cloakObject?: number; eyeType?: string;
+    makeupIndex?: number; supportIndex?: number; auraColor?: string;
+  }) {
     const role: 'A' | 'B' = this.sessions.size === 0 ? 'A' : 'B';
     const session: PlayerSession = {
       client,
@@ -98,9 +103,17 @@ export class FightRoom extends Room<FightRoomState> {
     fighter.playerId = options.playerId;
     fighter.username = options.username;
     fighter.outfitColor = dbPlayer?.outfit_color ?? '#4a90d9';
-    fighter.auraColor = dbPlayer?.aura_color ?? '#7b2fff';
+    fighter.auraColor = options.auraColor ?? dbPlayer?.aura_color ?? '#7b2fff';
     fighter.hp = BASE_HP;
     fighter.energy = 0;
+    fighter.bodyObject   = options.bodyObject   ?? 1;
+    fighter.headObject   = options.headObject   ?? 0;
+    fighter.hairObject   = options.hairObject   ?? 1;
+    fighter.handObject   = options.handObject   ?? 1;
+    fighter.cloakObject  = options.cloakObject  ?? 0;
+    fighter.eyeType      = (options.eyeType     ?? 'Basic') as typeof fighter.eyeType;
+    fighter.makeupIndex  = options.makeupIndex  ?? 0;
+    fighter.supportIndex = options.supportIndex ?? 0;
 
     if (this.sessions.size === 2) {
       this.startCountdown();

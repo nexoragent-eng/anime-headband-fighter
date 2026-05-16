@@ -91,6 +91,7 @@ export class FightScene {
   private prevMyAnim = '';
   private prevOppAnim = '';
   private cardPickShown = false;
+  private oppLooksApplied = false;
   private netInput: SwipeInput | null = null;
   private netCleanupKb: (() => void) | null = null;
 
@@ -265,7 +266,15 @@ export class FightScene {
       if (!this.destroyed) this.handleNetPhase(phase);
     });
 
-    // Handle match end (room will disconnect after card pick)
+    // Apply opponent looks as soon as their playerId is populated.
+    // Player B always arrives after A, so A waits for B via .listen.
+    const oppState = this.myRole === 'A' ? state.playerB : state.playerA;
+    this.applyOpponentLooks(oppState);
+    oppState?.listen?.('playerId', (_val: string) => {
+      if (!this.destroyed) this.applyOpponentLooks(this.myRole === 'A' ? state.playerB : state.playerA);
+    });
+
+    // Handle room disconnect (after card pick, server calls disconnect())
     this.fightRoom.onLeave(() => {
       if (!this.destroyed && this.netPhase !== 'hub') {
         this.netPhase = 'hub';
@@ -275,6 +284,43 @@ export class FightScene {
 
     // Trigger for current phase (we might have joined mid-countdown)
     this.handleNetPhase(state.phase as string);
+  }
+
+  private applyOpponentLooks(oppState: any) {
+    if (this.oppLooksApplied || !oppState?.playerId || this.destroyed) return;
+    this.oppLooksApplied = true;
+
+    const { width: W, height: H } = this.ctx.app.screen;
+    const fightY = H * 0.62;
+    const auraStr: string = oppState.auraColor ?? '#ff8c00';
+    const auraHex = parseInt(auraStr.replace('#', ''), 16) || 0xff8c00;
+
+    // Recreate p2Fighter with the correct cosmetics and aura colour.
+    const p1Idx = this.container.getChildIndex(this.p1Fighter.container);
+    this.container.removeChild(this.p2Fighter.container);
+    this.p2Fighter.destroy();
+
+    this.p2Fighter = new Fighter({
+      name: (oppState.username as string) ?? 'Opponent',
+      auraColor: auraHex,
+      facing: 'left',
+      looks: {
+        bodyObject:   (oppState.bodyObject   as number) ?? 1,
+        headObject:   (oppState.headObject   as number) ?? 0,
+        hairObject:   (oppState.hairObject   as number) ?? 1,
+        handObject:   (oppState.handObject   as number) ?? 1,
+        cloakObject:  (oppState.cloakObject  as number) ?? 0,
+        eyeType:      ((oppState.eyeType as string) ?? 'Basic') as 'Basic' | 'Anger' | 'laugh',
+        makeupIndex:  (oppState.makeupIndex  as number) ?? 0,
+        supportIndex: (oppState.supportIndex as number) ?? 0,
+      },
+    });
+    this.p2Fighter.container.x = W * 0.72;
+    this.p2Fighter.container.y = fightY;
+    this.container.addChildAt(this.p2Fighter.container, p1Idx + 1);
+
+    // Reset anim tracking so the new fighter picks up the current server state next frame.
+    this.prevOppAnim = '';
   }
 
   private handleNetPhase(phase: string) {

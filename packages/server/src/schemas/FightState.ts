@@ -8,6 +8,15 @@ export class FighterState extends Schema {
   @type('string') username = '';
   @type('string') outfitColor = '#4a90d9';
   @type('string') auraColor = '#7b2fff';
+  // Spine cosmetics — synced so the client can render the opponent correctly
+  @type('number') bodyObject = 1;
+  @type('number') headObject = 0;
+  @type('number') hairObject = 1;
+  @type('number') handObject = 1;
+  @type('number') cloakObject = 0;
+  @type('string') eyeType = 'Basic';
+  @type('number') makeupIndex = 0;
+  @type('number') supportIndex = 0;
   @type('number') hp = 100;
   @type('number') energy = 0;
   @type('number') roundWins = 0;
