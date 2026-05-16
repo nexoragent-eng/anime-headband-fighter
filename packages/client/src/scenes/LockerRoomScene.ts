@@ -113,6 +113,7 @@ export class LockerRoomScene {
     CharacterSprite.preload().then(() => {
       this.previewSprite = CharacterSprite.create(this.looks, 'right');
       this.previewSprite.setScale(0.16);
+      this.previewSprite.freeze();
       this.previewContainer.addChild(this.previewSprite.container);
     });
 

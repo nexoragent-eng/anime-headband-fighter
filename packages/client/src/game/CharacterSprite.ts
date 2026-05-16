@@ -8,13 +8,13 @@ const SPINE_SKEL  = '/assets/spine/skeleton.json';
 
 export interface CharacterLooks {
   bodyObject:   number;   // 1–7
-  headObject:   number;   // 0 = none, 1–5 (06-08 have no setup attachment)
+  headObject:   number;   // 0 = none, 1–5
   hairObject:   number;   // 1–5
   handObject:   number;   // 0 = none, 1–6
   cloakObject:  number;   // 0 = none, 1–4
   eyeType:      'Basic' | 'Anger' | 'laugh';
   makeupIndex:  number;   // 0 = none, 1–2
-  supportIndex: number;   // 0 = none, 2 only (SupportObject_01 has no setup attachment)
+  supportIndex: number;   // 0 = none, 2 only
 }
 
 export const DEFAULT_LOOKS: CharacterLooks = {
@@ -43,13 +43,12 @@ const LOOPING = new Set([AnimState.IDLE, AnimState.BLOCK, AnimState.BANKAI]);
 
 // Only slots that have setup-pose attachments (verified from skeleton JSON)
 const BODY_SLOTS   = ['BodyObject_01','BodyObject_02','BodyObject_03','BodyObject_04','BodyObject_05','BodyObject_06','BodyObject_07'];
-const HEAD_SLOTS   = ['HeadObject_01','HeadObject_02','HeadObject_03','HeadObject_04','HeadObject_05']; // 06-08 have no setup attachment
+const HEAD_SLOTS   = ['HeadObject_01','HeadObject_02','HeadObject_03','HeadObject_04','HeadObject_05'];
 const HAIR_SLOTS   = ['hairObject_01','hairObject_02','hairObject_03','hairObject_04','hairObject_05'];
 const HAND_SLOTS   = ['HandObject_01','HandObject_02','HandObject_03','HandObject_04','HandObject_05','HandObject_06'];
 const CLOAK_SLOTS  = ['cloakObject_01','cloakObject_02','cloakObject_03','cloakObject_04'];
-const EYE_SLOTS    = ['Eye_Basic','Eye_Anger','Eye_laugh'];
 const MAKEUP_SLOTS = ['makeup_01','makeup_02'];
-const SUPPORT_SLOTS= ['SupportObject_02']; // SupportObject_01 has no setup attachment
+const SUPPORT_SLOTS= ['SupportObject_02'];
 
 const SCALE = 0.085;
 
@@ -58,16 +57,12 @@ let _preloadPromise: Promise<void> | null = null;
 export class CharacterSprite {
   readonly container: Container;
   private spine: Spine;
-  // Setup-pose attachment cache — avoids touching the skin system
-  private setupAtt: Map<string, Attachment | null>;
+  // Keyed by placeholder/slot name; built once from the default skin.
+  private setupAtt: Map<string, Attachment>;
 
   private constructor(spine: Spine, facing: 'left' | 'right') {
     this.spine = spine;
 
-    // In Spine v4.3, slot.data.setupPose.attachment is always null.
-    // The actual attachment objects live in the default skin (43 entries).
-    // Build the cache from defaultSkin.getAttachments() — keyed by placeholder name,
-    // which matches the slot name for this asset's 1-slot-per-part setup.
     this.setupAtt = new Map();
     const defaultSkin = spine.skeleton.data.defaultSkin;
     if (defaultSkin) {
@@ -116,14 +111,20 @@ export class CharacterSprite {
   // ── Public API ────────────────────────────────────────────────────────────
 
   applyLooks(looks: CharacterLooks): void {
-    this.toggleByIndex(BODY_SLOTS,  looks.bodyObject);
-    this.toggleByIndex(HEAD_SLOTS,  looks.headObject);
-    this.toggleByIndex(HAIR_SLOTS,  looks.hairObject);
-    this.toggleByIndex(HAND_SLOTS,  looks.handObject);
-    this.toggleByIndex(CLOAK_SLOTS, looks.cloakObject);
-    this.toggleByIndex(MAKEUP_SLOTS,  looks.makeupIndex);
-    this.toggleByIndex(SUPPORT_SLOTS, looks.supportIndex === 2 ? 1 : 0); // only slot 2 works
-    this.toggleEyes(looks.eyeType);
+    this.setSlotsDirect(BODY_SLOTS,    looks.bodyObject);
+    this.setSlotsDirect(HEAD_SLOTS,    looks.headObject);
+    this.setSlotsDirect(HAIR_SLOTS,    looks.hairObject);
+    this.setSlotsDirect(HAND_SLOTS,    looks.handObject);
+    this.setSlotsDirect(CLOAK_SLOTS,   looks.cloakObject);
+    this.setSlotsDirect(MAKEUP_SLOTS,  looks.makeupIndex);
+    this.setSlotsDirect(SUPPORT_SLOTS, looks.supportIndex === 2 ? 1 : 0);
+    this.setEyeSlotDirect(looks.eyeType);
+  }
+
+  /** Stop animation and freeze bones at setup pose (use in locker room preview). */
+  freeze(): void {
+    this.spine.state.clearTracks();
+    this.spine.skeleton.setupPoseBones();
   }
 
   playState(state: AnimState): void {
@@ -149,26 +150,24 @@ export class CharacterSprite {
 
   // ── Private helpers ───────────────────────────────────────────────────────
 
-  private toggleByIndex(slots: string[], showIdx: number): void {
+  private setSlotsDirect(slots: string[], showIdx: number): void {
     const skel = this.spine.skeleton;
     slots.forEach((name, i) => {
       const slot = skel.findSlot(name);
       if (!slot) return;
-      // showIdx is 1-based; i is 0-based. showIdx=0 means hide all.
-      slot.pose.setAttachment((showIdx > 0 && i === showIdx - 1)
-        ? (this.setupAtt.get(name) ?? null)
-        : null);
+      const att = showIdx > 0 && i === showIdx - 1 ? (this.setupAtt.get(name) ?? null) : null;
+      slot.pose.setAttachment(att);
     });
   }
 
-  private toggleEyes(eyeType: CharacterLooks['eyeType']): void {
+  private setEyeSlotDirect(eyeType: CharacterLooks['eyeType']): void {
     const skel = this.spine.skeleton;
-    EYE_SLOTS.forEach(name => {
-      const slot = skel.findSlot(name);
+    (['Basic', 'Anger', 'laugh'] as const).forEach(et => {
+      const slotName = `Eye_${et}`;
+      const slot = skel.findSlot(slotName);
       if (!slot) return;
-      slot.pose.setAttachment(name === `Eye_${eyeType}`
-        ? (this.setupAtt.get(name) ?? null)
-        : null);
+      const att = et === eyeType ? (this.setupAtt.get(slotName) ?? null) : null;
+      slot.pose.setAttachment(att);
     });
   }
 }
