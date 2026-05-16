@@ -29,15 +29,16 @@ export const DEFAULT_LOOKS: CharacterLooks = {
 };
 
 const ANIM_MAP: Record<AnimState, string> = {
-  [AnimState.IDLE]:         'Idle',
-  [AnimState.ATTACK]:       'SwordAttack',
-  [AnimState.HIGH_ATTACK]:  'SwordAttack',
-  [AnimState.LOW_ATTACK]:   'PunchAttack',
-  [AnimState.BLOCK]:        'StatusEffect',
-  [AnimState.HIT]:          'Hit',
-  [AnimState.KO]:           'Death',
-  [AnimState.BANKAI]:       'MagicAttack',
-};
+  idle: "idle",
+  attack: "attack",
+  high_attack: "high_attack",
+  low_attack: "low_attack",
+  block: "block",
+  hit: "hit",
+  ko: "ko",
+  bankai: "bankai",
+  [AnimState.DODGE]: "Jump",
+}
 
 const LOOPING = new Set([AnimState.IDLE, AnimState.BLOCK, AnimState.BANKAI]);
 

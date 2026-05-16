@@ -1,0 +1,11 @@
+--- /tmp/CharacterSprite.ts.orig	2026-05-16 18:10:36.580288364 +0000
++++ client/src/game/CharacterSprite.ts	2026-05-16 18:10:38.495038573 +0000
+@@ -34,6 +34,8 @@
+   [AnimState.HIGH_ATTACK]:  'SwordAttack',
+   [AnimState.LOW_ATTACK]:   'PunchAttack',
+   [AnimState.BLOCK]:        'StatusEffect',
++  // Spine pack has no dedicated Dodge animation. Jump is the closest non-looping evasive motion.
++  [AnimState.DODGE]:        'Jump',
+   [AnimState.HIT]:          'Hit',
+   [AnimState.KO]:           'Death',
+   [AnimState.BANKAI]:       'MagicAttack',
