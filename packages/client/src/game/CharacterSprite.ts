@@ -64,13 +64,17 @@ export class CharacterSprite {
   private constructor(spine: Spine, facing: 'left' | 'right') {
     this.spine = spine;
 
-    // Capture setup-pose attachments from slot.data.setupPose (v4.3 API).
-    // We cannot use skeleton.setAttachment() — the customisable parts are
-    // setup-pose only, not part of any skin.
+    // In Spine v4.3, slot.data.setupPose.attachment is always null.
+    // The actual attachment objects live in the default skin (43 entries).
+    // Build the cache from defaultSkin.getAttachments() — keyed by placeholder name,
+    // which matches the slot name for this asset's 1-slot-per-part setup.
     this.setupAtt = new Map();
-    spine.skeleton.slots.forEach(slot => {
-      this.setupAtt.set(slot.data.name, slot.data.setupPose.attachment);
-    });
+    const defaultSkin = spine.skeleton.data.defaultSkin;
+    if (defaultSkin) {
+      for (const entry of defaultSkin.getAttachments()) {
+        this.setupAtt.set(entry.placeholder, entry.attachment);
+      }
+    }
 
     // spine-pixi-v8 outputs vertices already in PixiJS Y-down space — no Y flip needed.
     // This asset faces LEFT by default; flip X to make it face right.

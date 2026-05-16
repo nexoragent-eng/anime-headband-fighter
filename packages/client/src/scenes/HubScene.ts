@@ -381,7 +381,7 @@ export class HubScene {
     const fighter = new Fighter({
       name,
       auraColor: auraCol,
-      facing: kind === "ring" && x > RING_X ? "left" : "right",
+      facing: x > RING_X ? "left" : "right",
       scale: kind === "ring" ? 0.11 : 0.085,
       looks: this.avatarLooksFor(id, kind, npc),
     });
