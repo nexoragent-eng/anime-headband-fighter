@@ -15,7 +15,7 @@ const BODY_OPTIONS: PartOption[] = [1,2,3,4,5,6,7].map(i => ({
 }));
 const HEAD_OPTIONS: PartOption[] = [
   { label: 'None', img: '', value: 0 },
-  ...[1,2,3,4,5,6,7,8].map(i => ({ label: `Head ${i}`, img: `${IMG}HeadObject_0${i}.png`, value: i })),
+  ...[1,2,3,4,5].map(i => ({ label: `Head ${i}`, img: `${IMG}HeadObject_0${i}.png`, value: i })),
 ];
 const HAIR_OPTIONS: PartOption[] = [1,2,3,4,5].map(i => ({
   label: `Hair ${i}`, img: `${IMG}hairObject_0${i}.png`, value: i,
@@ -39,8 +39,7 @@ const MAKEUP_OPTIONS: PartOption[] = [
   { label: 'Style 2', img: `${IMG}makeup_02.png`, value: 2 },
 ];
 const SUPPORT_OPTIONS: PartOption[] = [
-  { label: 'None', img: '', value: 0 },
-  { label: 'Item 1', img: `${IMG}SupportObject_01.png`, value: 1 },
+  { label: 'None',   img: '', value: 0 },
   { label: 'Item 2', img: `${IMG}SupportObject_02.png`, value: 2 },
 ];
 

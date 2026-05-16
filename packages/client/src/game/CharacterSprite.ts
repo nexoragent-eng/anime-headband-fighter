@@ -1,5 +1,6 @@
-import { Container, Assets, Graphics } from 'pixi.js';
+import { Container, Assets } from 'pixi.js';
 import { Spine } from '@esotericsoftware/spine-pixi-v8';
+import type { Attachment } from '@esotericsoftware/spine-pixi-v8';
 import { AnimState } from '@ahf/shared';
 
 const SPINE_ATLAS = '/assets/spine/skeleton.atlas';
@@ -7,13 +8,13 @@ const SPINE_SKEL  = '/assets/spine/skeleton.json';
 
 export interface CharacterLooks {
   bodyObject:   number;   // 1–7
-  headObject:   number;   // 0 = none, 1–8
+  headObject:   number;   // 0 = none, 1–5 (06-08 have no setup attachment)
   hairObject:   number;   // 1–5
   handObject:   number;   // 0 = none, 1–6
   cloakObject:  number;   // 0 = none, 1–4
   eyeType:      'Basic' | 'Anger' | 'laugh';
   makeupIndex:  number;   // 0 = none, 1–2
-  supportIndex: number;   // 0 = none, 1–2
+  supportIndex: number;   // 0 = none, 2 only (SupportObject_01 has no setup attachment)
 }
 
 export const DEFAULT_LOOKS: CharacterLooks = {
@@ -27,7 +28,6 @@ export const DEFAULT_LOOKS: CharacterLooks = {
   supportIndex: 0,
 };
 
-// Maps AnimState → Spine animation name
 const ANIM_MAP: Record<AnimState, string> = {
   [AnimState.IDLE]:         'Idle',
   [AnimState.ATTACK]:       'SwordAttack',
@@ -41,17 +41,16 @@ const ANIM_MAP: Record<AnimState, string> = {
 
 const LOOPING = new Set([AnimState.IDLE, AnimState.BLOCK, AnimState.BANKAI]);
 
-// All slot groups in the skeleton
+// Only slots that have setup-pose attachments (verified from skeleton JSON)
 const BODY_SLOTS   = ['BodyObject_01','BodyObject_02','BodyObject_03','BodyObject_04','BodyObject_05','BodyObject_06','BodyObject_07'];
-const HEAD_SLOTS   = ['HeadObject_01','HeadObject_02','HeadObject_03','HeadObject_04','HeadObject_05','HeadObject_06','HeadObject_07','HeadObject_08'];
+const HEAD_SLOTS   = ['HeadObject_01','HeadObject_02','HeadObject_03','HeadObject_04','HeadObject_05']; // 06-08 have no setup attachment
 const HAIR_SLOTS   = ['hairObject_01','hairObject_02','hairObject_03','hairObject_04','hairObject_05'];
 const HAND_SLOTS   = ['HandObject_01','HandObject_02','HandObject_03','HandObject_04','HandObject_05','HandObject_06'];
 const CLOAK_SLOTS  = ['cloakObject_01','cloakObject_02','cloakObject_03','cloakObject_04'];
 const EYE_SLOTS    = ['Eye_Basic','Eye_Anger','Eye_laugh'];
 const MAKEUP_SLOTS = ['makeup_01','makeup_02'];
-const SUPPORT_SLOTS= ['SupportObject_01','SupportObject_02'];
+const SUPPORT_SLOTS= ['SupportObject_02']; // SupportObject_01 has no setup attachment
 
-// Spine units → pixels. Character skeleton height ≈ 1301 units.
 const SCALE = 0.085;
 
 let _preloadPromise: Promise<void> | null = null;
@@ -59,9 +58,20 @@ let _preloadPromise: Promise<void> | null = null;
 export class CharacterSprite {
   readonly container: Container;
   private spine: Spine;
+  // Setup-pose attachment cache — avoids touching the skin system
+  private setupAtt: Map<string, Attachment | null>;
 
   private constructor(spine: Spine, facing: 'left' | 'right') {
     this.spine = spine;
+
+    // Capture setup-pose attachments from slot.data.setupPose (v4.3 API).
+    // We cannot use skeleton.setAttachment() — the customisable parts are
+    // setup-pose only, not part of any skin.
+    this.setupAtt = new Map();
+    spine.skeleton.slots.forEach(slot => {
+      this.setupAtt.set(slot.data.name, slot.data.setupPose.attachment);
+    });
+
     // Spine Y-axis is up; PixiJS Y-axis is down → flip Y
     spine.scale.set(facing === 'left' ? -SCALE : SCALE, -SCALE);
     this.container = new Container();
@@ -70,12 +80,12 @@ export class CharacterSprite {
 
   // ── Static factory ────────────────────────────────────────────────────────
 
-  static preload(): Promise<void> {
+  static preload(onProgress?: (p: number) => void): Promise<void> {
     if (!_preloadPromise) {
-      _preloadPromise = (async () => {
-        await Assets.load(SPINE_ATLAS);
-        await Assets.load(SPINE_SKEL);
-      })();
+      _preloadPromise = Assets.load(
+        [SPINE_ATLAS, SPINE_SKEL],
+        onProgress,
+      ).then(() => undefined);
     }
     return _preloadPromise;
   }
@@ -93,7 +103,6 @@ export class CharacterSprite {
     return cs;
   }
 
-  /** Async convenience wrapper for code that doesn't pre-load. */
   static async createAsync(looks: CharacterLooks, facing: 'left' | 'right'): Promise<CharacterSprite> {
     await CharacterSprite.preload();
     return CharacterSprite.create(looks, facing);
@@ -102,16 +111,14 @@ export class CharacterSprite {
   // ── Public API ────────────────────────────────────────────────────────────
 
   applyLooks(looks: CharacterLooks): void {
-    const skel = this.spine.skeleton;
-
-    BODY_SLOTS.forEach((slot, i) => skel.setAttachment(slot, looks.bodyObject === i + 1 ? slot : null));
-    HEAD_SLOTS.forEach((slot, i) => skel.setAttachment(slot, looks.headObject === i + 1 ? slot : null));
-    HAIR_SLOTS.forEach((slot, i) => skel.setAttachment(slot, looks.hairObject === i + 1 ? slot : null));
-    HAND_SLOTS.forEach((slot, i) => skel.setAttachment(slot, looks.handObject === i + 1 ? slot : null));
-    CLOAK_SLOTS.forEach((slot, i) => skel.setAttachment(slot, looks.cloakObject === i + 1 ? slot : null));
-    EYE_SLOTS.forEach(slot => skel.setAttachment(slot, slot === `Eye_${looks.eyeType}` ? slot : null));
-    MAKEUP_SLOTS.forEach((slot, i) => skel.setAttachment(slot, looks.makeupIndex === i + 1 ? slot : null));
-    SUPPORT_SLOTS.forEach((slot, i) => skel.setAttachment(slot, looks.supportIndex === i + 1 ? slot : null));
+    this.toggleByIndex(BODY_SLOTS,  looks.bodyObject);
+    this.toggleByIndex(HEAD_SLOTS,  looks.headObject);
+    this.toggleByIndex(HAIR_SLOTS,  looks.hairObject);
+    this.toggleByIndex(HAND_SLOTS,  looks.handObject);
+    this.toggleByIndex(CLOAK_SLOTS, looks.cloakObject);
+    this.toggleByIndex(MAKEUP_SLOTS,  looks.makeupIndex);
+    this.toggleByIndex(SUPPORT_SLOTS, looks.supportIndex === 2 ? 1 : 0); // only slot 2 works
+    this.toggleEyes(looks.eyeType);
   }
 
   playState(state: AnimState): void {
@@ -134,10 +141,36 @@ export class CharacterSprite {
   destroy(): void {
     this.container.destroy({ children: true });
   }
+
+  // ── Private helpers ───────────────────────────────────────────────────────
+
+  private toggleByIndex(slots: string[], showIdx: number): void {
+    const skel = this.spine.skeleton;
+    slots.forEach((name, i) => {
+      const slot = skel.findSlot(name);
+      if (!slot) return;
+      // showIdx is 1-based; i is 0-based. showIdx=0 means hide all.
+      slot.pose.setAttachment((showIdx > 0 && i === showIdx - 1)
+        ? (this.setupAtt.get(name) ?? null)
+        : null);
+    });
+  }
+
+  private toggleEyes(eyeType: CharacterLooks['eyeType']): void {
+    const skel = this.spine.skeleton;
+    EYE_SLOTS.forEach(name => {
+      const slot = skel.findSlot(name);
+      if (!slot) return;
+      slot.pose.setAttachment(name === `Eye_${eyeType}`
+        ? (this.setupAtt.get(name) ?? null)
+        : null);
+    });
+  }
 }
 
-// ── Fallback placeholder (used when Spine hasn't loaded yet) ─────────────────
+// ── Fallback placeholder ──────────────────────────────────────────────────────
 
+import { Graphics } from 'pixi.js';
 export function makePlaceholderSprite(auraColor = 0x7b2fff): Container {
   const c = new Container();
   const g = new Graphics();
