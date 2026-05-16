@@ -41,14 +41,24 @@ const ANIM_MAP: Record<AnimState, string> = {
 
 const LOOPING = new Set([AnimState.IDLE, AnimState.BLOCK, AnimState.BANKAI]);
 
-// Only slots that have setup-pose attachments (verified from skeleton JSON)
-const BODY_SLOTS   = ['BodyObject_01','BodyObject_02','BodyObject_03','BodyObject_04','BodyObject_05','BodyObject_06','BodyObject_07'];
-const HEAD_SLOTS   = ['HeadObject_01','HeadObject_02','HeadObject_03','HeadObject_04','HeadObject_05'];
-const HAIR_SLOTS   = ['hairObject_01','hairObject_02','hairObject_03','hairObject_04','hairObject_05'];
-const HAND_SLOTS   = ['HandObject_01','HandObject_02','HandObject_03','HandObject_04','HandObject_05','HandObject_06'];
-const CLOAK_SLOTS  = ['cloakObject_01','cloakObject_02','cloakObject_03','cloakObject_04'];
-const MAKEUP_SLOTS = ['makeup_01','makeup_02'];
-const SUPPORT_SLOTS= ['SupportObject_02'];
+// Skeleton has two slot systems:
+//   • "Solt :" slots — on character bones (Body, Head, Hand). Equipment renders ON the character.
+//   • Root-bone slots — named after the attachments (BodyObject_01, hairObject_01, etc.).
+//     These have setup-pose defaults and appear at the character's feet during animation.
+//
+// We use only the "Solt :" slots for rendering, and explicitly null out the root-bone slots
+// so their setup-pose defaults don't bleed through.
+
+const ROOT_EQUIP_SLOTS = [
+  'BodyObject_01','BodyObject_02','BodyObject_03','BodyObject_04','BodyObject_05','BodyObject_06','BodyObject_07',
+  'cloakObject_01','cloakObject_02','cloakObject_03','cloakObject_04',
+  'hairObject_01','hairObject_02','hairObject_03','hairObject_04','hairObject_05',
+  'HeadObject_01','HeadObject_02','HeadObject_03','HeadObject_04','HeadObject_05',
+  'HandObject_01','HandObject_02','HandObject_03','HandObject_04','HandObject_05','HandObject_06',
+  'SupportObject_02',
+  'Eye_Basic','Eye_laugh','Eye_Anger',
+  'makeup_01','makeup_02',
+];
 
 const SCALE = 0.085;
 
@@ -57,7 +67,7 @@ let _preloadPromise: Promise<void> | null = null;
 export class CharacterSprite {
   readonly container: Container;
   private spine: Spine;
-  // Keyed by placeholder/slot name; built once from the default skin.
+  // Attachment name → Attachment object, built from the default skin.
   private setupAtt: Map<string, Attachment>;
 
   private constructor(spine: Spine, facing: 'left' | 'right') {
@@ -111,17 +121,42 @@ export class CharacterSprite {
   // ── Public API ────────────────────────────────────────────────────────────
 
   applyLooks(looks: CharacterLooks): void {
-    this.setSlotsDirect(BODY_SLOTS,    looks.bodyObject);
-    this.setSlotsDirect(HEAD_SLOTS,    looks.headObject);
-    this.setSlotsDirect(HAIR_SLOTS,    looks.hairObject);
-    this.setSlotsDirect(HAND_SLOTS,    looks.handObject);
-    this.setSlotsDirect(CLOAK_SLOTS,   looks.cloakObject);
-    this.setSlotsDirect(MAKEUP_SLOTS,  looks.makeupIndex);
-    this.setSlotsDirect(SUPPORT_SLOTS, looks.supportIndex === 2 ? 1 : 0);
-    this.setEyeSlotDirect(looks.eyeType);
+    const skel = this.spine.skeleton;
+
+    // Null out root-bone equipment slots so setup-pose defaults don't show at the feet.
+    for (const name of ROOT_EQUIP_SLOTS) {
+      skel.findSlot(name)?.pose.setAttachment(null);
+    }
+
+    // Body outfit — "Solt : Body" follows the Body bone.
+    this.setSingleSlot('Solt : Body',
+      looks.bodyObject > 0 ? `BodyObject_0${looks.bodyObject}` : null);
+
+    // Cloak — also on the Body bone.
+    this.setSingleSlot('Solt : cloak',
+      looks.cloakObject > 0 ? `cloakObject_0${looks.cloakObject}` : null);
+
+    // Head slot — headgear, hair, and makeup share one slot on the Head bone.
+    // Priority: headgear > hair > makeup (only one can show at a time).
+    const headAtt =
+      looks.headObject   > 0 ? `HeadObject_0${looks.headObject}`  :
+      looks.hairObject   > 0 ? `hairObject_0${looks.hairObject}`  :
+      looks.makeupIndex  > 0 ? `makeup_0${looks.makeupIndex}`     : null;
+    this.setSingleSlot('Solt : Head', headAtt);
+
+    // Eyes — "Solt : Head02" follows the Head bone.
+    this.setSingleSlot('Solt : Head02', `Eye_${looks.eyeType}`);
+
+    // Weapon / hand item — "Solt : R_Hand" follows the L_Hand bone.
+    this.setSingleSlot('Solt : R_Hand',
+      looks.handObject > 0 ? `HandObject_0${looks.handObject}` : null);
+
+    // Support item — "Solt : L_Hand" follows the R_Hand bone.
+    this.setSingleSlot('Solt : L_Hand',
+      looks.supportIndex === 2 ? 'SupportObject_02' : null);
   }
 
-  /** Stop animation and freeze bones at setup pose (use in locker room preview). */
+  /** Stop animation and freeze bones at setup pose. */
   freeze(): void {
     this.spine.state.clearTracks();
     this.spine.skeleton.setupPoseBones();
@@ -150,25 +185,11 @@ export class CharacterSprite {
 
   // ── Private helpers ───────────────────────────────────────────────────────
 
-  private setSlotsDirect(slots: string[], showIdx: number): void {
-    const skel = this.spine.skeleton;
-    slots.forEach((name, i) => {
-      const slot = skel.findSlot(name);
-      if (!slot) return;
-      const att = showIdx > 0 && i === showIdx - 1 ? (this.setupAtt.get(name) ?? null) : null;
-      slot.pose.setAttachment(att);
-    });
-  }
-
-  private setEyeSlotDirect(eyeType: CharacterLooks['eyeType']): void {
-    const skel = this.spine.skeleton;
-    (['Basic', 'Anger', 'laugh'] as const).forEach(et => {
-      const slotName = `Eye_${et}`;
-      const slot = skel.findSlot(slotName);
-      if (!slot) return;
-      const att = et === eyeType ? (this.setupAtt.get(slotName) ?? null) : null;
-      slot.pose.setAttachment(att);
-    });
+  private setSingleSlot(slotName: string, attachmentName: string | null): void {
+    const slot = this.spine.skeleton.findSlot(slotName);
+    if (!slot) return;
+    const att = attachmentName ? (this.setupAtt.get(attachmentName) ?? null) : null;
+    slot.pose.setAttachment(att);
   }
 }
 
