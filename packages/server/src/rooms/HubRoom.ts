@@ -23,6 +23,35 @@ export class HubRoom extends Room<HubRoomState> {
       player.y = Math.max(0, Math.min(600, data.y));
     });
 
+    this.onMessage('challenge', (client: Client, data: { targetSessionId: string }) => {
+      const challenger = this.state.players.get(client.sessionId);
+      const target = this.state.players.get(data.targetSessionId);
+      if (!challenger || !target || target.inFight || challenger.inFight) return;
+      if (target.challengeFrom) return; // already being challenged
+      target.challengeFrom = client.sessionId;
+    });
+
+    this.onMessage('challenge_respond', (client: Client, data: { accept: boolean }) => {
+      const responder = this.state.players.get(client.sessionId);
+      if (!responder || !responder.challengeFrom) return;
+
+      const challengerId = responder.challengeFrom;
+      responder.challengeFrom = '';
+
+      if (!data.accept) return;
+
+      const challenger = this.state.players.get(challengerId);
+      if (!challenger) return;
+
+      challenger.inFight = true;
+      responder.inFight = true;
+
+      const roomId = `challenge-${Date.now()}`;
+      const challengerClient = this.clients.find(c => c.sessionId === challengerId);
+      challengerClient?.send('fight_found', { roomId });
+      client.send('fight_found', { roomId });
+    });
+
     this.onMessage('queue_fight', async (client: Client) => {
       const player = this.state.players.get(client.sessionId);
       if (!player || player.inFight) return;
@@ -37,26 +66,49 @@ export class HubRoom extends Room<HubRoomState> {
     });
   }
 
-  onJoin(client: Client, options: { playerId: string; username: string }) {
+  onJoin(client: Client, options: {
+    playerId: string;
+    username: string;
+    cosmetics?: {
+      bodyObject?: number; headObject?: number; hairObject?: number;
+      handObject?: number; cloakObject?: number; eyeType?: string;
+      makeupIndex?: number; supportIndex?: number; auraColor?: string;
+    };
+  }) {
     const dbPlayer = playerRepo.findById(options.playerId);
     const top3ids = playerRepo.getLeaderboard(3).map(p => p.id);
+    const cos = options.cosmetics;
 
     const player = new HubPlayer();
     player.sessionId = client.sessionId;
     player.username = options.username;
     player.outfitColor = dbPlayer?.outfit_color ?? '#4a90d9';
-    player.auraColor = dbPlayer?.aura_color ?? '#7b2fff';
+    player.auraColor = cos?.auraColor ?? dbPlayer?.aura_color ?? '#7b2fff';
     player.rankPoints = dbPlayer?.rank_points ?? 1000;
     player.x = 200 + Math.random() * 400;
     player.y = 200 + Math.random() * 200;
     player.inFight = false;
-    player.headbandRank = top3ids.indexOf(options.playerId) + 1; // 0 if not in top 3
+    player.headbandRank = top3ids.indexOf(options.playerId) + 1;
+
+    player.bodyObject   = cos?.bodyObject   ?? 1;
+    player.headObject   = cos?.headObject   ?? 0;
+    player.hairObject   = cos?.hairObject   ?? 1;
+    player.handObject   = cos?.handObject   ?? 1;
+    player.cloakObject  = cos?.cloakObject  ?? 0;
+    player.eyeType      = (cos?.eyeType     ?? 'Basic') as 'Basic' | 'Anger' | 'laugh';
+    player.makeupIndex  = cos?.makeupIndex  ?? 0;
+    player.supportIndex = cos?.supportIndex ?? 0;
 
     this.state.players.set(client.sessionId, player);
   }
 
   onLeave(client: Client) {
-    this.state.players.delete(client.sessionId);
+    const sessionId = client.sessionId;
+    // Clear any pending challenges this player sent to others
+    this.state.players.forEach(p => {
+      if (p.challengeFrom === sessionId) p.challengeFrom = '';
+    });
+    this.state.players.delete(sessionId);
   }
 
   private refreshLeaderboard() {

@@ -3,6 +3,9 @@ import { AnimState } from "@ahf/shared";
 import type { GameContext } from "../main";
 import { Fighter, type CharacterLooks } from "../game/Fighter";
 import { NPC_ROSTER, type NPCProfile } from "../../../shared/src/npcs";
+import { Client } from "colyseus.js";
+import type { Room } from "colyseus.js";
+import { SERVER_URL } from "../config";
 
 interface Avatar {
   id: string;
@@ -16,7 +19,7 @@ interface Avatar {
   npc?: NPCProfile;
 }
 
-type Hotspot = "ring" | "locker" | `npc:${string}` | null;
+type Hotspot = "ring" | "locker" | `npc:${string}` | `player:${string}` | null;
 
 const WORLD_W = 900;
 const WORLD_H = 520;
@@ -56,6 +59,20 @@ export class HubScene {
   private pinchScale0 = 0.86;
   private cleanupFns: Array<() => void> = [];
 
+  // ── Multiplayer networking ────────────────────────────────────────────────
+  private hubRoom: Room | null = null;
+  private mySessionId = '';
+  private myHubPlayer: Record<string, unknown> | null = null;
+  private otherPlayers = new Map<string, { root: Container; fighter: Fighter; hubPlayer: Record<string, unknown> }>();
+  private lastMoveSent = 0;
+  private lastSentX = -1;
+  private lastSentY = -1;
+  // Challenge state
+  private lastChallengeFrom = '';
+  private challengePopup: HTMLDivElement | null = null;
+  private countdownOverlay: HTMLDivElement | null = null;
+  private sceneDestroyed = false;
+
   private demoPhase = 0;
   private demoTimer = 0;
   private readonly DEMO_DUR = [1700, 220, 90, 420, 300, 220, 90, 420, 300];
@@ -84,6 +101,8 @@ export class HubScene {
     this.ticker = new Ticker();
     this.ticker.add(this.update.bind(this));
     this.ticker.start();
+
+    void this.connectToHub();
   }
 
   private buildWorld() {
@@ -458,6 +477,184 @@ export class HubScene {
     return presets[id] ?? { bodyObject: 1, handObject: 1, hairObject: 1 };
   }
 
+  // ── Multiplayer ──────────────────────────────────────────────────────────
+
+  private async connectToHub() {
+    const player = this.ctx.player;
+    if (!player) return;
+    try {
+      const client = new Client(SERVER_URL);
+      const cos = player.cosmetics;
+      const room = await client.joinOrCreate('hub_room', {
+        playerId: player.id,
+        username: player.username,
+        cosmetics: {
+          bodyObject:   cos?.bodyObject   ?? 1,
+          headObject:   cos?.headObject   ?? 0,
+          hairObject:   cos?.hairObject   ?? 1,
+          handObject:   cos?.handObject   ?? 1,
+          cloakObject:  cos?.cloakObject  ?? 0,
+          eyeType:      cos?.eyeType      ?? 'Basic',
+          makeupIndex:  cos?.makeupIndex  ?? 0,
+          supportIndex: cos?.supportIndex ?? 0,
+          auraColor:    cos?.auraColor    ?? '#7b2fff',
+        },
+      });
+      if (this.sceneDestroyed) { void room.leave(); return; }
+      this.hubRoom = room;
+      this.mySessionId = room.sessionId;
+
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const state = (room as any).state;
+
+      state.players.onAdd((hubPlayer: Record<string, unknown>, sessionId: string) => {
+        if (sessionId === this.mySessionId) {
+          this.myHubPlayer = hubPlayer;
+          return;
+        }
+        this.addOtherPlayer(sessionId, hubPlayer);
+      });
+
+      state.players.onRemove((_: unknown, sessionId: string) => {
+        this.removeOtherPlayer(sessionId);
+      });
+
+      room.onMessage('fight_found', () => {
+        this.hideChallengePopup();
+        this.showCountdown(() => this.ctx.switchScene('fight', { local: true }));
+      });
+    } catch {
+      // Offline — hub works without a server connection
+    }
+  }
+
+  private addOtherPlayer(sessionId: string, hubPlayer: Record<string, unknown>) {
+    const x = (hubPlayer.x as number) ?? RING_X;
+    const y = (hubPlayer.y as number) ?? 440;
+    const aura = colorStringToHex((hubPlayer.auraColor as string) ?? '#7b2fff');
+
+    const root = new Container();
+    root.x = x;
+    root.y = y;
+
+    const fighter = new Fighter({
+      name: (hubPlayer.username as string) ?? '???',
+      auraColor: aura,
+      facing: x > RING_X ? 'left' : 'right',
+      scale: 0.085,
+      looks: {
+        bodyObject:   (hubPlayer.bodyObject   as number) ?? 1,
+        headObject:   (hubPlayer.headObject   as number) ?? 0,
+        hairObject:   (hubPlayer.hairObject   as number) ?? 1,
+        handObject:   (hubPlayer.handObject   as number) ?? 1,
+        cloakObject:  (hubPlayer.cloakObject  as number) ?? 0,
+        eyeType:      ((hubPlayer.eyeType     as string) ?? 'Basic') as 'Basic' | 'Anger' | 'laugh',
+        makeupIndex:  (hubPlayer.makeupIndex  as number) ?? 0,
+        supportIndex: (hubPlayer.supportIndex as number) ?? 0,
+      },
+    });
+    root.addChild(fighter.container);
+
+    const label = new Text({
+      text: (hubPlayer.username as string) ?? '???',
+      style: new TextStyle({
+        fill: 0xffffff, fontSize: 11, fontWeight: 'bold',
+        dropShadow: { blur: 4, color: '#000', distance: 1, angle: Math.PI / 4 },
+      }),
+    });
+    label.anchor.set(0.5, 1);
+    label.y = -120;
+    root.addChild(label);
+
+    this.world.addChild(root);
+    this.otherPlayers.set(sessionId, { root, fighter, hubPlayer });
+  }
+
+  private removeOtherPlayer(sessionId: string) {
+    const other = this.otherPlayers.get(sessionId);
+    if (!other) return;
+    this.world.removeChild(other.root);
+    other.root.destroy({ children: true });
+    this.otherPlayers.delete(sessionId);
+  }
+
+  private showChallengePopup(challengerSessionId: string) {
+    if (this.challengePopup) return;
+    const other = this.otherPlayers.get(challengerSessionId);
+    const name = (other?.hubPlayer.username as string) ?? 'Someone';
+
+    const popup = document.createElement('div');
+    popup.style.cssText = [
+      'position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);',
+      'background:rgba(10,10,30,.96);border:2px solid rgba(255,107,53,.65);',
+      'border-radius:16px;padding:28px 32px;text-align:center;',
+      'pointer-events:all;z-index:50;min-width:260px;',
+      'box-shadow:0 8px 40px rgba(0,0,0,.75);',
+    ].join('');
+    popup.innerHTML = `
+      <div style="color:#ffd700;font-size:18px;font-weight:bold;letter-spacing:2px;margin-bottom:8px">CHALLENGE!</div>
+      <div style="color:#ccc;font-size:14px;margin-bottom:22px">${name} wants to fight you</div>
+      <div style="display:flex;gap:12px;justify-content:center">
+        <button id="ch-accept" style="padding:11px 24px;border-radius:10px;border:none;background:linear-gradient(135deg,#ff6b35,#cc0000);color:#fff;font-weight:bold;font-size:14px;cursor:pointer;letter-spacing:1px">ACCEPT</button>
+        <button id="ch-decline" style="padding:11px 24px;border-radius:10px;border:1px solid rgba(255,255,255,.2);background:rgba(255,255,255,.08);color:#aaa;font-size:14px;cursor:pointer">Decline</button>
+      </div>
+    `;
+    popup.querySelector('#ch-accept')!.addEventListener('click', () => {
+      this.hubRoom?.send('challenge_respond', { accept: true });
+      this.hideChallengePopup();
+    });
+    popup.querySelector('#ch-decline')!.addEventListener('click', () => {
+      this.hubRoom?.send('challenge_respond', { accept: false });
+      this.hideChallengePopup();
+    });
+
+    document.getElementById('ui-layer')!.appendChild(popup);
+    this.challengePopup = popup;
+  }
+
+  private hideChallengePopup() {
+    this.challengePopup?.remove();
+    this.challengePopup = null;
+  }
+
+  private showCountdown(onDone: () => void) {
+    if (this.countdownOverlay) return;
+    const overlay = document.createElement('div');
+    overlay.style.cssText = [
+      'position:absolute;inset:0;background:rgba(0,0,0,.82);',
+      'display:flex;align-items:center;justify-content:center;',
+      'z-index:60;pointer-events:all;',
+    ].join('');
+
+    const num = document.createElement('div');
+    num.style.cssText = [
+      'color:#ffd700;font-size:120px;',
+      'font-family:Impact,Arial Black,sans-serif;font-weight:bold;',
+      'text-shadow:0 0 60px #ff6b35;transition:transform .15s ease,opacity .15s ease;',
+    ].join('');
+    overlay.appendChild(num);
+    document.getElementById('ui-layer')!.appendChild(overlay);
+    this.countdownOverlay = overlay;
+
+    const steps = ['3', '2', '1', 'FIGHT!'];
+    let i = 0;
+    const tick = () => {
+      if (i >= steps.length) {
+        overlay.remove();
+        this.countdownOverlay = null;
+        onDone();
+        return;
+      }
+      num.textContent = steps[i];
+      num.style.transform = 'scale(1.35)';
+      num.style.opacity = '1';
+      setTimeout(() => { num.style.transform = 'scale(1)'; num.style.opacity = '0.75'; }, 60);
+      i++;
+      setTimeout(tick, 1000);
+    };
+    tick();
+  }
+
   private setupInput() {
     const canvas = this.ctx.app.canvas;
     const keyDown = (e: KeyboardEvent) => this.keys.add(e.key.toLowerCase());
@@ -590,6 +787,19 @@ export class HubScene {
       }
     }
 
+    // Throttled position sync to server (~15/s)
+    if (this.hubRoom) {
+      const now = performance.now();
+      const px = p.x, py = p.y;
+      if (now - this.lastMoveSent > 66 &&
+          (Math.abs(px - this.lastSentX) > 1 || Math.abs(py - this.lastSentY) > 1)) {
+        this.hubRoom.send('move', { x: Math.round(px), y: Math.round(py) });
+        this.lastMoveSent = now;
+        this.lastSentX = px;
+        this.lastSentY = py;
+      }
+    }
+
     // soft camera follow, only when zoomed in enough
     const { width: W, height: H } = this.ctx.app.screen;
     if (this.worldScale > 0.95) {
@@ -614,6 +824,12 @@ export class HubScene {
       const d = Math.hypot(px - npc.root.x, py - npc.root.y);
       if (d < best.d && d < 58) best = { id: `npc:${npc.id}`, d };
     }
+
+    for (const [sessionId, other] of this.otherPlayers) {
+      const d = Math.hypot(px - other.root.x, py - other.root.y);
+      if (d < best.d && d < 58) best = { id: `player:${sessionId}`, d };
+    }
+
     this.hotspot = best.id;
   }
 
@@ -631,6 +847,16 @@ export class HubScene {
       av.fighter.container.y = av.kind === "player" ? bob : 0;
       av.fighter.update(this.ticker.deltaMS);
     }
+
+    // Smooth-lerp other real players toward their server-reported position
+    for (const other of this.otherPlayers.values()) {
+      const tx = (other.hubPlayer.x as number) ?? other.root.x;
+      const ty = (other.hubPlayer.y as number) ?? other.root.y;
+      other.root.x += (tx - other.root.x) * 0.15;
+      other.root.y += (ty - other.root.y) * 0.15;
+      other.fighter.update(this.ticker.deltaMS);
+    }
+
     this.ringAura.alpha = 0.65 + Math.sin(this.t * 0.002) * 0.2;
   }
 
@@ -767,6 +993,14 @@ export class HubScene {
         this.ctx.app.screen.height > this.ctx.app.screen.width
           ? "block"
           : "none";
+
+    // Show/hide incoming challenge popup based on server state
+    const challengeFrom = (this.myHubPlayer?.challengeFrom as string) ?? '';
+    if (challengeFrom !== this.lastChallengeFrom) {
+      this.lastChallengeFrom = challengeFrom;
+      if (challengeFrom) this.showChallengePopup(challengeFrom);
+      else this.hideChallengePopup();
+    }
   }
 
   private rebuildActions(actions: HTMLDivElement) {
@@ -778,6 +1012,19 @@ export class HubScene {
         this.makeBtn("LOCKER", "#112244", "#1a5cff", () =>
           this.ctx.switchScene("locker"),
         ),
+      );
+      return;
+    }
+
+    if (this.hotspot?.startsWith("player:")) {
+      const sessionId = this.hotspot.slice(7);
+      const other = this.otherPlayers.get(sessionId);
+      const username = (other?.hubPlayer.username as string) ?? 'Player';
+      actions.appendChild(
+        this.makeBtn(`FIGHT ${username}`, "#661111", "#ff4b2b", () => {
+          this.hubRoom?.send('challenge', { targetSessionId: sessionId });
+          this.flashTip(`Challenge sent to ${username}!`);
+        }),
       );
       return;
     }
@@ -874,9 +1121,25 @@ export class HubScene {
   }
 
   destroy() {
+    this.sceneDestroyed = true;
     this.ticker.stop();
     this.ticker.destroy();
     this.cleanupFns.forEach((fn) => fn());
+
+    // Disconnect from hub room
+    void this.hubRoom?.leave();
+    this.hubRoom = null;
+
+    // Clean up other player display objects
+    for (const sessionId of [...this.otherPlayers.keys()]) {
+      this.removeOtherPlayer(sessionId);
+    }
+
+    // Remove any open overlays
+    this.hideChallengePopup();
+    this.countdownOverlay?.remove();
+    this.countdownOverlay = null;
+
     this.ctx.app.stage.removeChild(this.container);
     this.container.destroy({ children: true });
     this.uiEl.remove();

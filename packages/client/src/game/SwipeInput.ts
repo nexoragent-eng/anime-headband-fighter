@@ -11,6 +11,8 @@ interface Touch {
   t: number;
 }
 
+const HOLD_TO_BLOCK_MS = 170;
+
 export class SwipeInput {
   private starts = new Map<number, Touch>();
   private onSwipe: SwipeCallback;
@@ -43,9 +45,14 @@ export class SwipeInput {
         if (!start) continue;
         this.starts.delete(t.identifier);
         const dt = Date.now() - start.t;
-        if (dt > MAX_SWIPE_MS) continue;
         const dx = t.clientX - start.x;
         const dy = t.clientY - start.y;
+        const dist = Math.sqrt(dx * dx + dy * dy);
+        if (dist < MIN_SWIPE_PX && dt >= HOLD_TO_BLOCK_MS && dt <= MAX_SWIPE_MS) {
+          this.onSwipe(MoveType.BLOCK);
+          continue;
+        }
+        if (dt > MAX_SWIPE_MS) continue;
         const move = this.classify(dx, dy);
         if (move !== MoveType.NONE) this.onSwipe(move);
       }
@@ -72,7 +79,7 @@ export class SwipeInput {
     const absX = Math.abs(dx);
     const absY = Math.abs(dy);
     if (absX > absY) {
-      return dx > 0 ? MoveType.ATTACK : MoveType.BLOCK;
+      return dx > 0 ? MoveType.ATTACK : MoveType.DODGE;
     } else {
       return dy < 0 ? MoveType.HIGH_ATTACK : MoveType.LOW_ATTACK;
     }
@@ -114,6 +121,7 @@ export const KEYBOARD_MAP_P1: Record<string, MoveType> = {
   KeyW: MoveType.HIGH_ATTACK,
   KeyS: MoveType.LOW_ATTACK,
   KeyA: MoveType.BLOCK,
+  ShiftLeft: MoveType.DODGE,
   KeyQ: MoveType.BANKAI,
 };
 
@@ -122,5 +130,6 @@ export const KEYBOARD_MAP_P2: Record<string, MoveType> = {
   ArrowUp: MoveType.HIGH_ATTACK,
   ArrowDown: MoveType.LOW_ATTACK,
   ArrowLeft: MoveType.BLOCK,
+  ShiftRight: MoveType.DODGE,
   Numpad0: MoveType.BANKAI,
 };

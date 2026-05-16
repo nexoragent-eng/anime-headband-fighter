@@ -3,6 +3,7 @@ export enum MoveType {
   HIGH_ATTACK = 'high_attack',
   LOW_ATTACK = 'low_attack',
   BLOCK = 'block',
+  DODGE = 'dodge',
   BANKAI = 'bankai',
   NONE = 'none',
 }
@@ -13,6 +14,7 @@ export enum AnimState {
   HIGH_ATTACK = 'high_attack',
   LOW_ATTACK = 'low_attack',
   BLOCK = 'block',
+  DODGE = 'dodge',
   HIT = 'hit',
   BANKAI = 'bankai',
   KO = 'ko',

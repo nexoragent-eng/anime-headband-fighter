@@ -11,6 +11,7 @@ export const DAMAGE = {
   LOW_ATTACK: 8,
   BANKAI_BEAM: 40,
   COUNTER_HIT: 15,
+  BLOCK_CHIP: 2,
 };
 
 export const ENERGY_GAIN = {
@@ -30,7 +31,7 @@ export const RUN_LENGTH = 5; // fights per run before cards reset
 
 export const COUNTDOWN_DURATION = 3; // seconds
 
-export const BLOCK_WINDOW_MS = 200; // ms — window for "perfect block"
+export const BLOCK_WINDOW_MS = 100; // ms — tight window for perfect block / counter timing
 export const SLOW_DURATION_MS = 1500; // ms — low_sweep slow effect
 
 export const TICK_RATE = 20; // server ticks per second
@@ -38,3 +39,10 @@ export const ROUND_END_DELAY = 2000; // ms before showing card picker / next rou
 
 export const HEADBAND_RANKS = [1, 2, 3];
 export const HEADBAND_TIERS = { 1: 'gold', 2: 'silver', 3: 'bronze' } as const;
+
+export const DODGE_IFRAME_MS = 120;
+export const DODGE_COOLDOWN_MS = 500;
+export const HIT_STOP_MS = 50;
+export const INPUT_BUFFER_MS = 100;
+export const BLOCK_BREAK_HITS = 3;
+export const BLOCK_BREAK_RECOVERY_MS = 650;

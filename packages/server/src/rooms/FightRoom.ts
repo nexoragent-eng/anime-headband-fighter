@@ -8,7 +8,7 @@ import {
   BASE_HP, MAX_ENERGY, BANKAI_ENERGY_COST,
   DAMAGE, ENERGY_GAIN, RANK, RUN_LENGTH,
   ROUND_DURATION, ROUNDS_TO_WIN, COUNTDOWN_DURATION,
-  TICK_RATE, ROUND_END_DELAY,
+  TICK_RATE, ROUND_END_DELAY, BLOCK_WINDOW_MS, DODGE_IFRAME_MS, DODGE_COOLDOWN_MS, BLOCK_BREAK_HITS, BLOCK_BREAK_RECOVERY_MS,
 } from '@ahf/shared';
 import type { FightPhase } from '@ahf/shared';
 import { FightPhase as FP } from '@ahf/shared';
@@ -16,13 +16,14 @@ import { FightPhase as FP } from '@ahf/shared';
 const TICK_MS = 1000 / TICK_RATE;
 const IDLE_RESET_MS = 300;
 
-const SERVER_MOVE_TIMINGS: Record<MoveType, { windupMs: number; activeMs: number; recoveryMs: number }> = {
-  [MoveType.NONE]: { windupMs: 0, activeMs: 0, recoveryMs: 0 },
-  [MoveType.ATTACK]: { windupMs: 120, activeMs: 90, recoveryMs: 190 },
-  [MoveType.HIGH_ATTACK]: { windupMs: 210, activeMs: 110, recoveryMs: 290 },
-  [MoveType.LOW_ATTACK]: { windupMs: 170, activeMs: 100, recoveryMs: 250 },
-  [MoveType.BLOCK]: { windupMs: 0, activeMs: 260, recoveryMs: 140 },
-  [MoveType.BANKAI]: { windupMs: 360, activeMs: 220, recoveryMs: 520 },
+const SERVER_MOVE_TIMINGS: Record<MoveType, { windupMs: number; activeMs: number; recoveryMs: number; rangePx: number; missRecoveryMult: number }> = {
+  [MoveType.NONE]: { windupMs: 0, activeMs: 0, recoveryMs: 0, rangePx: 0, missRecoveryMult: 1 },
+  [MoveType.ATTACK]: { windupMs: 80, activeMs: 100, recoveryMs: 120, rangePx: 132, missRecoveryMult: 1.25 },
+  [MoveType.HIGH_ATTACK]: { windupMs: 200, activeMs: 120, recoveryMs: 300, rangePx: 164, missRecoveryMult: 1.35 },
+  [MoveType.LOW_ATTACK]: { windupMs: 150, activeMs: 100, recoveryMs: 245, rangePx: 118, missRecoveryMult: 1.3 },
+  [MoveType.BLOCK]: { windupMs: 0, activeMs: 260, recoveryMs: 170, rangePx: 0, missRecoveryMult: 1 },
+  [MoveType.DODGE]: { windupMs: 0, activeMs: 120, recoveryMs: 380, rangePx: 0, missRecoveryMult: 1 },
+  [MoveType.BANKAI]: { windupMs: 520, activeMs: 220, recoveryMs: 620, rangePx: 9999, missRecoveryMult: 1.2 },
 };
 
 interface PlayerSession {
@@ -34,6 +35,10 @@ interface PlayerSession {
   blockWindowStart: number;
   actionLockedUntil: number;
   blockActiveUntil: number;
+  blockHits: number;
+  blockBrokenUntil: number;
+  dodgeActiveUntil: number;
+  dodgeCooldownUntil: number;
 }
 
 export class FightRoom extends Room<FightRoomState> {
@@ -59,17 +64,7 @@ export class FightRoom extends Room<FightRoomState> {
       if (!session || this.state.phase !== FP.FIGHTING) return;
       if (!msg.move || msg.move === MoveType.NONE) return;
 
-      const now = Date.now();
-      if (now < session.actionLockedUntil) return;
-
-      const timing = SERVER_MOVE_TIMINGS[msg.move];
-      session.actionLockedUntil = now + timing.windupMs + timing.activeMs + timing.recoveryMs;
-      session.lastMove = msg.move;
-      session.lastMoveTick = this.tick;
-      if (msg.move === MoveType.BLOCK) {
-        session.blockWindowStart = now;
-        session.blockActiveUntil = now + timing.activeMs;
-      }
+      this.beginServerAction(session, msg.move);
     });
 
     this.onMessage('card_pick', (client: Client, msg: { cardId: string }) => {
@@ -90,6 +85,10 @@ export class FightRoom extends Room<FightRoomState> {
       blockWindowStart: 0,
       actionLockedUntil: 0,
       blockActiveUntil: 0,
+      blockHits: 0,
+      blockBrokenUntil: 0,
+      dodgeActiveUntil: 0,
+      dodgeCooldownUntil: 0,
     };
     this.sessions.set(client.sessionId, session);
 
@@ -137,7 +136,49 @@ export class FightRoom extends Room<FightRoomState> {
       s.actionLockedUntil = 0;
       s.blockActiveUntil = 0;
       s.blockWindowStart = 0;
+      s.blockHits = 0;
+      s.blockBrokenUntil = 0;
+      s.dodgeActiveUntil = 0;
+      s.dodgeCooldownUntil = 0;
     });
+  }
+
+
+  private beginServerAction(session: PlayerSession, move: MoveType) {
+    const now = Date.now();
+    if (now < session.actionLockedUntil) return;
+    if (move === MoveType.DODGE && now < session.dodgeCooldownUntil) return;
+
+    const timing = SERVER_MOVE_TIMINGS[move];
+    session.actionLockedUntil = now + timing.windupMs + timing.activeMs + timing.recoveryMs;
+    session.lastMove = MoveType.NONE;
+    session.lastMoveTick = -1;
+
+    const fighter = session.role === 'A' ? this.state.playerA : this.state.playerB;
+    fighter.animState = moveToAnim(move);
+    this.scheduleAnimReset(fighter, timing.windupMs + timing.activeMs + timing.recoveryMs);
+
+    if (move === MoveType.BLOCK) {
+      if (now < session.blockBrokenUntil) return;
+      session.blockWindowStart = now;
+      session.blockActiveUntil = now + timing.activeMs;
+      return;
+    }
+
+    if (move === MoveType.DODGE) {
+      session.dodgeActiveUntil = now + DODGE_IFRAME_MS;
+      session.dodgeCooldownUntil = now + DODGE_COOLDOWN_MS;
+      return;
+    }
+
+    setTimeout(() => {
+      if (this.state.phase !== FP.FIGHTING) return;
+      const attacker = session.role === 'A' ? this.state.playerA : this.state.playerB;
+      const defender = session.role === 'A' ? this.state.playerB : this.state.playerA;
+      const defenderSess = this.getSessionByRole(session.role === 'A' ? 'B' : 'A');
+      if (!defenderSess || attacker.hp <= 0) return;
+      this.applyMove(attacker, defender, move, session, defenderSess);
+    }, timing.windupMs);
   }
 
   private update(dt: number) {
@@ -200,11 +241,24 @@ export class FightRoom extends Room<FightRoomState> {
 
     attacker.animState = moveToAnim(move);
     this.scheduleAnimReset(attacker, 300);
-    if (move === MoveType.BLOCK) return;
+    if (move === MoveType.BLOCK || move === MoveType.DODGE) return;
+
+    if (Date.now() <= defenderSess.dodgeActiveUntil) {
+      const timing = SERVER_MOVE_TIMINGS[move];
+      _attackerSess.actionLockedUntil += Math.round(timing.recoveryMs * (timing.missRecoveryMult - 1));
+      return;
+    }
 
     const blocked = this.checkBlock(defender, defenderSess, move);
     if (blocked) {
       attacker.energy = Math.min(MAX_ENERGY, attacker.energy + ENERGY_GAIN.ON_BLOCK);
+      defenderSess.blockHits++;
+      if (defenderSess.blockHits >= BLOCK_BREAK_HITS) {
+        defenderSess.blockHits = 0;
+        defenderSess.blockActiveUntil = 0;
+        defenderSess.blockBrokenUntil = Date.now() + BLOCK_BREAK_RECOVERY_MS;
+        defender.animState = AnimState.HIT;
+      }
       if (defender.counterOnPerfectBlock && this.isPerfectBlock(defenderSess)) {
         this.dealDamage(attacker, defender, DAMAGE.COUNTER_HIT);
       }
@@ -227,14 +281,16 @@ export class FightRoom extends Room<FightRoomState> {
     }
   }
 
-  private checkBlock(defender: FighterState, defenderSess: PlayerSession, move: MoveType): boolean {
-    if (Date.now() > defenderSess.blockActiveUntil) return false;
+  private checkBlock(_defender: FighterState, defenderSess: PlayerSession, move: MoveType): boolean {
+    const now = Date.now();
+    if (now > defenderSess.blockActiveUntil || now < defenderSess.blockBrokenUntil) return false;
+    // Heavy/Bankai beat block. They must be dodged or punished during startup.
     if (move === MoveType.HIGH_ATTACK || move === MoveType.BANKAI) return false;
     return true;
   }
 
   private isPerfectBlock(sess: PlayerSession): boolean {
-    return Date.now() - sess.blockWindowStart < 160;
+    return Date.now() - sess.blockWindowStart < BLOCK_WINDOW_MS;
   }
 
   private dealDamage(defender: FighterState, _attacker: FighterState, amount: number) {
@@ -249,7 +305,7 @@ export class FightRoom extends Room<FightRoomState> {
     const existing = this.animResetTimers.get(key);
     if (existing) clearTimeout(existing);
     const t = setTimeout(() => {
-      if (fighter.animState === AnimState.HIT || fighter.animState === AnimState.BANKAI || fighter.animState === AnimState.ATTACK) {
+      if (fighter.animState === AnimState.HIT || fighter.animState === AnimState.BANKAI || fighter.animState === AnimState.ATTACK || fighter.animState === AnimState.HIGH_ATTACK || fighter.animState === AnimState.LOW_ATTACK || fighter.animState === AnimState.BLOCK) {
         fighter.animState = fighter.hp <= 0 ? AnimState.KO : AnimState.IDLE;
       }
     }, ms);
@@ -348,6 +404,7 @@ function moveToAnim(move: MoveType): AnimState {
     case MoveType.HIGH_ATTACK: return AnimState.HIGH_ATTACK;
     case MoveType.LOW_ATTACK: return AnimState.LOW_ATTACK;
     case MoveType.BLOCK: return AnimState.BLOCK;
+    case MoveType.DODGE: return AnimState.BLOCK;
     case MoveType.BANKAI: return AnimState.BANKAI;
     default: return AnimState.IDLE;
   }

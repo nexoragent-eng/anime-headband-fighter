@@ -5,7 +5,7 @@
 import {
   MoveType,
   BASE_HP, MAX_ENERGY, BANKAI_ENERGY_COST,
-  DAMAGE, ENERGY_GAIN, BLOCK_WINDOW_MS,
+  DAMAGE, ENERGY_GAIN, BLOCK_WINDOW_MS, BLOCK_BREAK_HITS, BLOCK_BREAK_RECOVERY_MS,
 } from '@ahf/shared';
 
 export interface FighterState {
@@ -15,6 +15,11 @@ export interface FighterState {
   hitCount: number;
   isBlocking: boolean;
   blockStart: number;
+  blockHits: number;
+  blockBrokenUntil: number;
+  isDodging: boolean;
+  dodgeUntil: number;
+  hitStunUntil: number;
   isSlowed: boolean;
   slowedUntil: number;
   // card effects
@@ -33,6 +38,10 @@ export interface MoveResult {
   defenderHpDelta: number;
   defenderEnergyDelta: number;
   blocked: boolean;
+  perfectBlocked: boolean;
+  blockBroken: boolean;
+  evaded: boolean;
+  whiffed: boolean;
   counterHit: boolean;
   knockback: boolean;
   slowApplied: boolean;
@@ -72,6 +81,10 @@ export function resolveMove(
     defenderHpDelta: 0,
     defenderEnergyDelta: 0,
     blocked: false,
+    perfectBlocked: false,
+    blockBroken: false,
+    evaded: false,
+    whiffed: false,
     counterHit: false,
     knockback: false,
     slowApplied: false,
@@ -81,17 +94,30 @@ export function resolveMove(
 
   if (move === MoveType.NONE) return { ...base, noop: true };
 
+  if (now < attacker.hitStunUntil) return { ...base, noop: true };
+
+  if (move === MoveType.DODGE) {
+    attacker.isDodging = true;
+    return { ...base, noop: false };
+  }
+
   // ── Bankai ────────────────────────────────────────────────────────────────
   if (move === MoveType.BANKAI) {
     if (attacker.energy < BANKAI_ENERGY_COST) return { ...base, noop: true };
 
     attacker.energy = 0;
-    const blocked = isBlocked(defender, move);
+    const evaded = isEvaded(defender, now);
+    if (evaded) return { ...base, evaded: true, whiffed: true };
+
+    const blocked = isBlocked(defender, move, now);
     base.bankaiBlocked = blocked;
 
     if (!blocked) {
       const dmg = Math.round(DAMAGE.BANKAI_BEAM / Math.max(defender.defenseMult, 0.1));
       defender.hp = Math.max(0, defender.hp - dmg);
+  defender.hitStunUntil = now + hitStunFor(move);
+  defender.isBlocking = false;
+  defender.blockHits = 0;
       base.defenderHpDelta = -dmg;
       defender.energy = Math.min(MAX_ENERGY, defender.energy + ENERGY_GAIN.ON_TAKE_HIT);
       base.defenderEnergyDelta = ENERGY_GAIN.ON_TAKE_HIT;
@@ -101,21 +127,35 @@ export function resolveMove(
 
   // ── Block (self) ──────────────────────────────────────────────────────────
   if (move === MoveType.BLOCK) {
+    if (now < attacker.blockBrokenUntil) return { ...base, noop: true };
     attacker.isBlocking = true;
     attacker.blockStart = now;
     return { ...base, noop: false };
   }
 
   // ── Normal attack ─────────────────────────────────────────────────────────
-  const blocked = isBlocked(defender, move);
+  if (isEvaded(defender, now)) {
+    return { ...base, evaded: true, whiffed: true };
+  }
+
+  const blocked = isBlocked(defender, move, now);
   if (blocked) {
     const energyGain = ENERGY_GAIN.ON_BLOCK;
     attacker.energy = Math.min(MAX_ENERGY, attacker.energy + energyGain);
     base.attackerEnergyDelta = energyGain;
     base.blocked = true;
+    defender.blockHits++;
+    base.perfectBlocked = now - defender.blockStart < BLOCK_WINDOW_MS;
+
+    if (defender.blockHits >= BLOCK_BREAK_HITS) {
+      defender.isBlocking = false;
+      defender.blockHits = 0;
+      defender.blockBrokenUntil = now + BLOCK_BREAK_RECOVERY_MS;
+      base.blockBroken = true;
+    }
 
     // Perfect block counter
-    if (defender.counterOnPerfectBlock && now - defender.blockStart < BLOCK_WINDOW_MS) {
+    if (defender.counterOnPerfectBlock && base.perfectBlocked) {
       const cDmg = Math.round(DAMAGE.COUNTER_HIT * attacker.attackMult);
       attacker.hp = Math.max(0, attacker.hp - cDmg);
       base.counterHit = true;
@@ -130,6 +170,9 @@ export function resolveMove(
   dmg = Math.max(1, dmg);
 
   defender.hp = Math.max(0, defender.hp - dmg);
+  defender.hitStunUntil = now + hitStunFor(move);
+  defender.isBlocking = false;
+  defender.blockHits = 0;
   base.defenderHpDelta = -dmg;
 
   const hitEnergyAttacker = ENERGY_GAIN.ON_HIT;
@@ -202,15 +245,35 @@ export function resetForRound(s: FighterState): void {
   s.hp = BASE_HP;
   s.hitCount = 0;
   s.isBlocking = false;
+  s.blockHits = 0;
+  s.blockBrokenUntil = 0;
+  s.isDodging = false;
+  s.dodgeUntil = 0;
+  s.hitStunUntil = 0;
   s.isSlowed = false;
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-export function isBlocked(defender: FighterState, move: MoveType): boolean {
-  if (!defender.isBlocking) return false;
+export function isBlocked(defender: FighterState, move: MoveType, now = Date.now()): boolean {
+  if (!defender.isBlocking || now < defender.blockBrokenUntil) return false;
+  // Heavy and Bankai beat plain block. They must be dodged or punished during startup.
   if (move === MoveType.HIGH_ATTACK || move === MoveType.BANKAI) return false;
   return true;
+}
+
+export function isEvaded(defender: FighterState, now = Date.now()): boolean {
+  return defender.isDodging && now <= defender.dodgeUntil;
+}
+
+export function hitStunFor(move: MoveType): number {
+  switch (move) {
+    case MoveType.ATTACK: return 210;
+    case MoveType.HIGH_ATTACK: return 285;
+    case MoveType.LOW_ATTACK: return 235;
+    case MoveType.BANKAI: return 420;
+    default: return 0;
+  }
 }
 
 export function moveDamage(move: MoveType): number {
@@ -230,6 +293,11 @@ export function defaultFighterState(): FighterState {
     hitCount: 0,
     isBlocking: false,
     blockStart: 0,
+    blockHits: 0,
+    blockBrokenUntil: 0,
+    isDodging: false,
+    dodgeUntil: 0,
+    hitStunUntil: 0,
     isSlowed: false,
     slowedUntil: 0,
     attackMult: 1,

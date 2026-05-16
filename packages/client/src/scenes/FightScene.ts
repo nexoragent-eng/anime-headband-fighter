@@ -19,13 +19,31 @@ import type { CardDefinition } from '@ahf/shared';
 import { getPlayerCardCollection, claimCardRewardForPlayer } from '../game/CardCollectionStore';
 import { NPC_ROSTER, npcAITick, npcRng, type NPCProfile } from '../../../shared/src/npcs';
 import { drawRewardCards, getCardById } from '@ahf/shared';
-import { COUNTDOWN_DURATION, ROUND_DURATION, ROUNDS_TO_WIN } from '@ahf/shared';
-import { MOVE_TIMINGS, INPUT_BUFFER_MS, canBufferMove } from '../game/CombatTiming';
+import { COUNTDOWN_DURATION, ROUND_DURATION, ROUNDS_TO_WIN, DODGE_IFRAME_MS, DODGE_COOLDOWN_MS, HIT_STOP_MS } from '@ahf/shared';
+import { MOVE_TIMINGS, INPUT_BUFFER_MS, canBufferMove, isAttackMove } from '../game/CombatTiming';
 
 type FightPhase = 'countdown' | 'fighting' | 'round_end' | 'card_pick' | 'match_end';
 
 type FighterKey = 'p1' | 'p2';
-interface ActionRuntime { lockedUntil: number; bufferedMove: MoveType; bufferedAt: number; currentMove: MoveType; }
+interface ActionRuntime {
+  lockedUntil: number;
+  bufferedMove: MoveType;
+  bufferedAt: number;
+  currentMove: MoveType;
+  dodgeCooldownUntil: number;
+  hitStopUntil: number;
+}
+
+function freshActionRuntime(): ActionRuntime {
+  return {
+    lockedUntil: 0,
+    bufferedMove: MoveType.NONE,
+    bufferedAt: 0,
+    currentMove: MoveType.NONE,
+    dodgeCooldownUntil: 0,
+    hitStopUntil: 0,
+  };
+}
 
 export class FightScene {
   private container: Container;
@@ -45,8 +63,8 @@ export class FightScene {
   private roundTimer = ROUND_DURATION; // seconds
   private countdown = COUNTDOWN_DURATION;
   private actionRuntime: Record<FighterKey, ActionRuntime> = {
-    p1: { lockedUntil: 0, bufferedMove: MoveType.NONE, bufferedAt: 0, currentMove: MoveType.NONE },
-    p2: { lockedUntil: 0, bufferedMove: MoveType.NONE, bufferedAt: 0, currentMove: MoveType.NONE },
+    p1: freshActionRuntime(),
+    p2: freshActionRuntime(),
   };
   private overlay: Graphics;
   private overlayText: Text;
@@ -188,7 +206,7 @@ export class FightScene {
 
   private drawControls(W: number, H: number) {
     const hint1 = new Text({
-      text: 'P1: D=Atk  W=High  S=Low  A=Block  Q=Bankai\n← swipe left half',
+      text: 'P1: D=Light  W=Heavy  S=Low  A=Block  Shift=Dodge  Q=Bankai\nTouch: swipe right/up/down, swipe left=dodge, hold=block',
       style: new TextStyle({ fill: 0x888888, fontSize: 11 }),
     });
     hint1.x = 12;
@@ -196,7 +214,7 @@ export class FightScene {
     this.container.addChild(hint1);
 
     const hint2 = new Text({
-      text: 'P2: →=Atk  ↑=High  ↓=Low  ←=Block  0=Bankai\nswipe right half →',
+      text: 'P2: →=Light  ↑=Heavy  ↓=Low  ←=Block  RShift=Dodge  0=Bankai\nTiming > mashing',
       style: new TextStyle({ fill: 0x888888, fontSize: 11, align: 'right' }),
     });
     hint2.anchor.set(1, 1);
@@ -220,8 +238,8 @@ export class FightScene {
     this.p1Fighter.animState = AnimState.IDLE;
     this.p2Fighter.animState = AnimState.IDLE;
     this.roundTimer = ROUND_DURATION;
-    this.actionRuntime.p1 = { lockedUntil: 0, bufferedMove: MoveType.NONE, bufferedAt: 0, currentMove: MoveType.NONE };
-    this.actionRuntime.p2 = { lockedUntil: 0, bufferedMove: MoveType.NONE, bufferedAt: 0, currentMove: MoveType.NONE };
+    this.actionRuntime.p1 = freshActionRuntime();
+    this.actionRuntime.p2 = freshActionRuntime();
     this.roundEndScheduled = false;
     this.overlay.alpha = 0;
     this.overlayText.text = '';
@@ -269,8 +287,9 @@ export class FightScene {
       }
     }
 
-    this.p1Fighter.update(dt);
-    this.p2Fighter.update(dt);
+    const now = performance.now();
+    if (now >= this.actionRuntime.p1.hitStopUntil) this.p1Fighter.update(dt);
+    if (now >= this.actionRuntime.p2.hitStopUntil) this.p2Fighter.update(dt);
     const { width: W, height: H } = this.ctx.app.screen;
     this.bankaiEffect.update(dt, W, H);
   }
@@ -349,6 +368,9 @@ export class FightScene {
     const fighter = key === 'p1' ? this.p1Fighter : this.p2Fighter;
     const state = key === 'p1' ? this.s1 : this.s2;
 
+    if (now < state.hitStunUntil) return;
+    if (move === MoveType.DODGE && now < runtime.dodgeCooldownUntil) return;
+
     runtime.currentMove = move;
     runtime.lockedUntil = now + timing.windupMs + timing.activeMs + timing.recoveryMs;
     runtime.bufferedMove = MoveType.NONE;
@@ -361,6 +383,20 @@ export class FightScene {
       this.after(timing.activeMs, () => {
         state.isBlocking = false;
         if (fighter.animState === AnimState.BLOCK && state.hp > 0) fighter.animState = AnimState.IDLE;
+      });
+      this.scheduleAnimReset(key, state, fighter, timing.activeMs + timing.recoveryMs);
+      return;
+    }
+
+    if (move === MoveType.DODGE) {
+      state.isDodging = true;
+      state.dodgeUntil = Date.now() + DODGE_IFRAME_MS;
+      runtime.dodgeCooldownUntil = now + DODGE_COOLDOWN_MS;
+      // A tiny reposition makes spacing/punish clearer without adding platformer movement yet.
+      fighter.container.x += key === 'p1' ? -34 : 34;
+      this.after(timing.activeMs, () => {
+        state.isDodging = false;
+        if ((fighter.animState === AnimState.BLOCK || fighter.animState === AnimState.DODGE) && state.hp > 0) fighter.animState = AnimState.IDLE;
       });
       this.scheduleAnimReset(key, state, fighter, timing.activeMs + timing.recoveryMs);
       return;
@@ -386,7 +422,17 @@ export class FightScene {
     attackerKey: 'p1' | 'p2',
     dir: 'right' | 'left',
   ) {
-    // Show Bankai screen effect before resolving
+    const timing = MOVE_TIMINGS[move];
+    const runtime = this.actionRuntime[attackerKey];
+
+    if (isAttackMove(move) && !this.isInRange(attackerFighter, defenderFighter, timing.rangePx)) {
+      runtime.lockedUntil += Math.round(timing.recoveryMs * (timing.missRecoveryMult - 1));
+      this.flashWhiff(attackerFighter);
+      return;
+    }
+
+    // Show Bankai screen effect before resolving. It is powerful but has already paid
+    // the startup commitment before this active frame runs.
     if (move === MoveType.BANKAI && attacker.energy >= 100) {
       const { width: W, height: H } = this.ctx.app.screen;
       this.bankaiEffect.fire(attackerFighter.container.x, attackerFighter.container.y - 30, dir, W, H, attacker.bankaiBeamWidthMult, attacker.bankaiLeavesZone);
@@ -396,18 +442,45 @@ export class FightScene {
     const result = resolveMove(attacker, defender, move);
     if (result.noop) return;
 
-    // Defender hit flash
-    if (result.defenderHpDelta < 0 && !result.blocked) {
-      const defKey: 'p1' | 'p2' = attackerKey === 'p1' ? 'p2' : 'p1';
-      defenderFighter.animState = AnimState.HIT;
-      this.shake(move === MoveType.BANKAI ? 14 : 6, move === MoveType.BANKAI ? 260 : 150);
-      this.scheduleAnimReset(defKey, defender, defenderFighter, 280);
+    if (result.evaded || result.whiffed) {
+      runtime.lockedUntil += Math.round(timing.recoveryMs * (timing.missRecoveryMult - 1));
+      this.flashWhiff(attackerFighter);
+      return;
     }
 
-    // KO
+    if (result.blocked) {
+      this.shake(result.blockBroken ? 6 : 3, 120);
+      if (result.blockBroken) defenderFighter.animState = AnimState.HIT;
+      return;
+    }
+
+    // Defender hit flash + hit stop
+    if (result.defenderHpDelta < 0) {
+      const defKey: 'p1' | 'p2' = attackerKey === 'p1' ? 'p2' : 'p1';
+      this.applyHitStop(attackerKey, defKey);
+      defenderFighter.animState = AnimState.HIT;
+      this.shake(move === MoveType.BANKAI ? 14 : 6, move === MoveType.BANKAI ? 260 : 150);
+      this.scheduleAnimReset(defKey, defender, defenderFighter, timing.hitStunMs);
+    }
+
     if (defender.hp <= 0) {
       defenderFighter.animState = AnimState.KO;
     }
+  }
+
+  private isInRange(attacker: Fighter, defender: Fighter, rangePx: number): boolean {
+    return Math.abs(attacker.container.x - defender.container.x) <= rangePx;
+  }
+
+  private flashWhiff(fighter: Fighter) {
+    fighter.container.alpha = 0.72;
+    this.after(70, () => { fighter.container.alpha = 1; });
+  }
+
+  private applyHitStop(attackerKey: FighterKey, defenderKey: FighterKey) {
+    const until = performance.now() + HIT_STOP_MS;
+    this.actionRuntime[attackerKey].hitStopUntil = Math.max(this.actionRuntime[attackerKey].hitStopUntil, until);
+    this.actionRuntime[defenderKey].hitStopUntil = Math.max(this.actionRuntime[defenderKey].hitStopUntil, until);
   }
 
   // ── Round / match management ──────────────────────────────────────────────
@@ -575,6 +648,7 @@ function moveToAnim(move: MoveType): AnimState {
     case MoveType.HIGH_ATTACK: return AnimState.HIGH_ATTACK;
     case MoveType.LOW_ATTACK: return AnimState.LOW_ATTACK;
     case MoveType.BLOCK: return AnimState.BLOCK;
+    case MoveType.DODGE: return AnimState.BLOCK;
     case MoveType.BANKAI: return AnimState.BANKAI;
     default: return AnimState.IDLE;
   }

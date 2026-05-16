@@ -10,6 +10,19 @@ export class HubPlayer extends Schema {
   @type('number') y = 300;
   @type('boolean') inFight = false;
   @type('number') headbandRank = 0;
+
+  // Spine cosmetics (synced so other clients can render correct looks)
+  @type('number') bodyObject = 1;
+  @type('number') headObject = 0;
+  @type('number') hairObject = 1;
+  @type('number') handObject = 1;
+  @type('number') cloakObject = 0;
+  @type('string') eyeType = 'Basic';
+  @type('number') makeupIndex = 0;
+  @type('number') supportIndex = 0;
+
+  // sessionId of the player challenging this player; '' = no challenge pending
+  @type('string') challengeFrom = '';
 }
 
 export class LeaderEntry extends Schema {
