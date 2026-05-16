@@ -7,6 +7,7 @@ import { HubRoom } from './rooms/HubRoom';
 import { FightRoom } from './rooms/FightRoom';
 import { initDb, playerRepo } from './db/database';
 import { v4 as uuidv4 } from 'uuid';
+import { normalizeCardCollection } from '@ahf/shared';
 
 const PORT = parseInt(process.env.PORT ?? '2567', 10);
 
@@ -37,18 +38,48 @@ app.post('/auth/guest', (req, res) => {
       outfitColor: player.outfit_color,
       auraColor: player.aura_color,
       characterName: player.character_name,
+      bodyType: player.body_type ?? 'balanced',
+      weaponType: player.weapon_type ?? 'katana',
+      outfitStyle: player.outfit_style ?? 'gi',
+      hairColor: player.hair_color ?? '#111827',
+      skinTone: player.skin_tone ?? '#ffc99b',
     },
     currentRunCards: JSON.parse(player.current_run_cards),
     fightsInCurrentRun: player.fights_in_current_run,
+    cardCollection: playerRepo.getCardCollection(player.id),
   });
 });
 
 // Cosmetics save
 app.post('/player/:id/cosmetics', (req, res) => {
   const { id } = req.params;
-  const { hairStyle, outfitColor, auraColor, characterName } = req.body;
-  playerRepo.updateCosmetics(id, hairStyle ?? 0, outfitColor ?? '#4a90d9', auraColor ?? '#7b2fff', characterName ?? '');
+  const { hairStyle, outfitColor, auraColor, characterName, bodyType, weaponType, outfitStyle, hairColor, skinTone } = req.body;
+  playerRepo.updateCosmetics(id, {
+    hairStyle: hairStyle ?? 0,
+    outfitColor: outfitColor ?? '#4a90d9',
+    auraColor: auraColor ?? '#7b2fff',
+    characterName: characterName ?? '',
+    bodyType,
+    weaponType,
+    outfitStyle,
+    hairColor,
+    skinTone,
+  });
   res.json({ ok: true });
+});
+
+
+// Card collection save
+app.post('/player/:id/cards', (req, res) => {
+  const { id } = req.params;
+  const collection = normalizeCardCollection(req.body);
+  playerRepo.updateCardCollection(id, collection);
+  res.json({ ok: true, cardCollection: collection });
+});
+
+app.get('/player/:id/cards', (req, res) => {
+  const { id } = req.params;
+  res.json(playerRepo.getCardCollection(id));
 });
 
 // Leaderboard

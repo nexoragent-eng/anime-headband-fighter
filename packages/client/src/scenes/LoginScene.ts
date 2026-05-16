@@ -143,7 +143,7 @@ export class LoginScene {
         id: 'local',
         username: input.value.trim() || 'Player1',
         rankPoints: 1000,
-        cosmetics: { hairStyle: 0, outfitColor: '#4a90d9', auraColor: '#7b2fff', characterName: '' },
+        cosmetics: { characterName: '', auraColor: '#7b2fff', bodyObject: 1, headObject: 0, hairObject: 1, handObject: 1, cloakObject: 0, eyeType: 'Basic', makeupIndex: 0, supportIndex: 0 },
         currentRunCards: [],
         fightsInCurrentRun: 0,
         createdAt: Date.now(),

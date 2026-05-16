@@ -34,19 +34,48 @@ export enum FightPhase {
 }
 
 export interface Cosmetics {
-  hairStyle: number;
-  outfitColor: string;
-  auraColor: string;
   characterName: string;
+  auraColor: string;
+
+  // Sprite-based customization (Spine asset Set 2)
+  bodyObject: number;        // 1–7
+  headObject: number;        // 0 = none, 1–8
+  hairObject: number;        // 1–5
+  handObject: number;        // 0 = none, 1–6
+  cloakObject: number;       // 0 = none, 1–4
+  eyeType: 'Basic' | 'Anger' | 'laugh';
+  makeupIndex: number;       // 0 = none, 1–2
+  supportIndex: number;      // 0 = none, 1–2
+
+  // Legacy – kept so old save data still deserialises
+  hairStyle?: number;
+  outfitColor?: string;
+  bodyType?: string;
+  weaponType?: string;
+  outfitStyle?: string;
+  hairColor?: string;
+  skinTone?: string;
 }
+
 
 export interface PlayerProfile {
   id: string;
   username: string;
   rankPoints: number;
   cosmetics: Cosmetics;
+
+  // Legacy run fields kept for compatibility with older rooms.
   currentRunCards: string[];
   fightsInCurrentRun: number;
+
+  // New card system: permanent collection, limited active loadout.
+  cardCollection?: {
+    unlocked: string[];
+    active: string[];
+    currency: number;
+    soldDuplicates: number;
+  };
+
   createdAt: number;
   updatedAt: number;
 }

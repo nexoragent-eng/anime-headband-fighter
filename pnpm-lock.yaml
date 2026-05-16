@@ -17,6 +17,9 @@ importers:
       '@ahf/shared':
         specifier: workspace:*
         version: link:../shared
+      '@esotericsoftware/spine-pixi-v8':
+        specifier: ^4.3.0
+        version: 4.3.0(pixi.js@8.18.1)
       colyseus.js:
         specifier: ^0.15.28
         version: 0.15.28
@@ -268,6 +271,17 @@ packages:
     engines: {node: '>=12'}
     cpu: [x64]
     os: [win32]
+
+  '@esotericsoftware/spine-canvas@4.3.0':
+    resolution: {integrity: sha512-KaCfBQkSlZ7ylhLkm4p/9m5CNp+zKvDkDTEaZeYS1dZ5DfTxvFPibSIzt2lF4uVXTx2l5+7RAD5xXqD8sU/D/A==}
+
+  '@esotericsoftware/spine-core@4.3.0':
+    resolution: {integrity: sha512-MbQd5wT0At7EVHh3P0kNy8XkijXGV1/KJxijI+shMF/d4Ko2rTktwKx4txtUeWVhr8TCY1Om0DlPkTBsFNDvfA==}
+
+  '@esotericsoftware/spine-pixi-v8@4.3.0':
+    resolution: {integrity: sha512-vdAJMoOl1wcDuvdhx3v2wvcpRg14ueutlF0M8UeoB82seebhUwM1q/zWHXyxWQjkmPJL+lmnPBzMnQiprx8CHw==}
+    peerDependencies:
+      pixi.js: ^8.16.0
 
   '@gamestdio/clock@1.1.9':
     resolution: {integrity: sha512-O+PG3aRRytgX2BhAPMIhbM2ftq1Q8G4xUrYjEWYM6EmpoKn8oY4lXENGhpgfww6mQxHPbjfWyIAR6Xj3y1+avw==}
@@ -1717,6 +1731,17 @@ snapshots:
 
   '@esbuild/win32-x64@0.21.5':
     optional: true
+
+  '@esotericsoftware/spine-canvas@4.3.0':
+    dependencies:
+      '@esotericsoftware/spine-core': 4.3.0
+
+  '@esotericsoftware/spine-core@4.3.0': {}
+
+  '@esotericsoftware/spine-pixi-v8@4.3.0(pixi.js@8.18.1)':
+    dependencies:
+      '@esotericsoftware/spine-canvas': 4.3.0
+      pixi.js: 8.18.1
 
   '@gamestdio/clock@1.1.9': {}
 

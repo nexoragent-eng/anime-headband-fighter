@@ -11,8 +11,9 @@
   },
   "dependencies": {
     "@ahf/shared": "workspace:*",
-    "pixi.js": "^8.2.6",
-    "colyseus.js": "^0.15.28"
+    "@esotericsoftware/spine-pixi-v8": "^4.3.0",
+    "colyseus.js": "^0.15.28",
+    "pixi.js": "^8.2.6"
   },
   "devDependencies": {
     "@types/node": "^20.14.0",

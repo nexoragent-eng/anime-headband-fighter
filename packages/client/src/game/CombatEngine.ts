@@ -5,7 +5,7 @@
 import {
   MoveType,
   BASE_HP, MAX_ENERGY, BANKAI_ENERGY_COST,
-  DAMAGE, ENERGY_GAIN,
+  DAMAGE, ENERGY_GAIN, BLOCK_WINDOW_MS,
 } from '@ahf/shared';
 
 export interface FighterState {
@@ -115,7 +115,7 @@ export function resolveMove(
     base.blocked = true;
 
     // Perfect block counter
-    if (defender.counterOnPerfectBlock && now - defender.blockStart < 200) {
+    if (defender.counterOnPerfectBlock && now - defender.blockStart < BLOCK_WINDOW_MS) {
       const cDmg = Math.round(DAMAGE.COUNTER_HIT * attacker.attackMult);
       attacker.hp = Math.max(0, attacker.hp - cDmg);
       base.counterHit = true;

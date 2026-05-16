@@ -4,7 +4,7 @@ import { Fighter } from '../game/Fighter';
 import { SwipeInput, bindKeyboard, KEYBOARD_MAP_P1, KEYBOARD_MAP_P2 } from '../game/SwipeInput';
 import { BankaiEffect } from '../game/BankaiEffect';
 import { HUD } from '../ui/HUD';
-import { CardPickerUI } from '../game/CardPicker';
+import { CardRewardUI } from '../game/CardRewardUI';
 import {
   defaultFighterState,
   resolveMove,
@@ -16,10 +16,16 @@ import {
 import type { FighterState } from '../game/CombatEngine';
 import { MoveType, AnimState } from '@ahf/shared';
 import type { CardDefinition } from '@ahf/shared';
-import { drawRandomCards } from '@ahf/shared';
+import { getPlayerCardCollection, claimCardRewardForPlayer } from '../game/CardCollectionStore';
+import { NPC_ROSTER, npcAITick, npcRng, type NPCProfile } from '../../../shared/src/npcs';
+import { drawRewardCards, getCardById } from '@ahf/shared';
 import { COUNTDOWN_DURATION, ROUND_DURATION, ROUNDS_TO_WIN } from '@ahf/shared';
+import { MOVE_TIMINGS, INPUT_BUFFER_MS, canBufferMove } from '../game/CombatTiming';
 
 type FightPhase = 'countdown' | 'fighting' | 'round_end' | 'card_pick' | 'match_end';
+
+type FighterKey = 'p1' | 'p2';
+interface ActionRuntime { lockedUntil: number; bufferedMove: MoveType; bufferedAt: number; currentMove: MoveType; }
 
 export class FightScene {
   private container: Container;
@@ -38,22 +44,28 @@ export class FightScene {
   private round = 1;
   private roundTimer = ROUND_DURATION; // seconds
   private countdown = COUNTDOWN_DURATION;
-  private pendingMove1: MoveType = MoveType.NONE;
-  private pendingMove2: MoveType = MoveType.NONE;
+  private actionRuntime: Record<FighterKey, ActionRuntime> = {
+    p1: { lockedUntil: 0, bufferedMove: MoveType.NONE, bufferedAt: 0, currentMove: MoveType.NONE },
+    p2: { lockedUntil: 0, bufferedMove: MoveType.NONE, bufferedAt: 0, currentMove: MoveType.NONE },
+  };
   private overlay: Graphics;
   private overlayText: Text;
   private roundEndScheduled = false;
-  private cardPicker: CardPickerUI | null = null;
+  private cardPicker: CardRewardUI | null = null;
   private destroyed = false;
   private impactShakeMs = 0;
   private impactShakeStrength = 0;
+  private npcProfile: NPCProfile | null = null;
+  private npcRng: (() => number) | null = null;
+  private npcInputCooldown = 0;
+  private npcRewardGranted = false;
 
   // Track every setTimeout so we can cancel on destroy
   private timeouts = new Set<ReturnType<typeof setTimeout>>();
   // Track per-fighter anim reset timers
   private animResets = new Map<'p1' | 'p2', ReturnType<typeof setTimeout>>();
 
-  constructor(private ctx: GameContext, _opts: { roomId?: string; local?: boolean }) {
+  constructor(private ctx: GameContext, opts: { roomId?: string; local?: boolean; npcId?: string }) {
     this.container = new Container();
     ctx.app.stage.addChild(this.container);
 
@@ -75,20 +87,40 @@ export class FightScene {
     const fightY = H * 0.62;
     this.s1 = defaultFighterState();
     this.s2 = defaultFighterState();
+    this.applyActiveCardLoadout();
 
     const p1Name = ctx.player?.username ?? 'Player 1';
+    this.npcProfile = opts.npcId ? NPC_ROSTER.find(n => n.id === opts.npcId) ?? null : null;
+    this.npcRng = this.npcProfile ? npcRng(Date.now() & 0xfffffff) : null;
+    const p2Name = this.npcProfile?.name ?? 'Player 2';
+    const p2Aura = this.npcProfile?.auraColor ?? 0xff8c00;
 
-    this.p1Fighter = new Fighter({ name: p1Name, outfitColor: 0x4a90d9, auraColor: 0x7b2fff, facing: 'right' });
+    const cos = ctx.player?.cosmetics;
+    this.p1Fighter = new Fighter({
+      name: p1Name,
+      facing: 'right',
+      auraColor: cos?.auraColor ? parseInt(cos.auraColor.replace('#', ''), 16) : 0x7b2fff,
+      looks: {
+        bodyObject:   cos?.bodyObject   ?? 1,
+        headObject:   cos?.headObject   ?? 0,
+        hairObject:   cos?.hairObject   ?? 1,
+        handObject:   cos?.handObject   ?? 1,
+        cloakObject:  cos?.cloakObject  ?? 0,
+        eyeType:      cos?.eyeType      ?? 'Basic',
+        makeupIndex:  cos?.makeupIndex  ?? 0,
+        supportIndex: cos?.supportIndex ?? 0,
+      },
+    });
     this.p1Fighter.container.x = W * 0.28;
     this.p1Fighter.container.y = fightY;
     this.container.addChild(this.p1Fighter.container);
 
-    this.p2Fighter = new Fighter({ name: 'Player 2', outfitColor: 0xe05050, auraColor: 0xff8c00, facing: 'left' });
+    this.p2Fighter = new Fighter({ name: p2Name, auraColor: p2Aura, facing: 'left', looks: { bodyObject: 2, hairObject: 2, handObject: 2, eyeType: 'Anger' } });
     this.p2Fighter.container.x = W * 0.72;
     this.p2Fighter.container.y = fightY;
     this.container.addChild(this.p2Fighter.container);
 
-    this.hud = new HUD(W, H, { p1Name, p2Name: 'Player 2', p1Color: 0x4a90d9, p2Color: 0xe05050 });
+    this.hud = new HUD(W, H, { p1Name, p2Name, p1Color: 0x4a90d9, p2Color: p2Aura });
     this.container.addChild(this.hud.container);
 
     this.overlay = new Graphics();
@@ -115,10 +147,10 @@ export class FightScene {
 
     this.drawControls(W, H);
 
-    this.p1Input = new SwipeInput(window, 'left', m => { this.pendingMove1 = m; });
-    this.p2Input = new SwipeInput(window, 'right', m => { this.pendingMove2 = m; });
-    this.cleanupKb1 = bindKeyboard(KEYBOARD_MAP_P1, m => { this.pendingMove1 = m; });
-    this.cleanupKb2 = bindKeyboard(KEYBOARD_MAP_P2, m => { this.pendingMove2 = m; });
+    this.p1Input = new SwipeInput(window, 'left', m => { this.queueMove('p1', m); });
+    this.p2Input = new SwipeInput(window, 'right', m => { this.queueMove('p2', m); });
+    this.cleanupKb1 = bindKeyboard(KEYBOARD_MAP_P1, m => { this.queueMove('p1', m); });
+    this.cleanupKb2 = bindKeyboard(KEYBOARD_MAP_P2, m => { this.queueMove('p2', m); });
 
     this.startCountdown();
 
@@ -188,8 +220,8 @@ export class FightScene {
     this.p1Fighter.animState = AnimState.IDLE;
     this.p2Fighter.animState = AnimState.IDLE;
     this.roundTimer = ROUND_DURATION;
-    this.pendingMove1 = MoveType.NONE;
-    this.pendingMove2 = MoveType.NONE;
+    this.actionRuntime.p1 = { lockedUntil: 0, bufferedMove: MoveType.NONE, bufferedAt: 0, currentMove: MoveType.NONE };
+    this.actionRuntime.p2 = { lockedUntil: 0, bufferedMove: MoveType.NONE, bufferedAt: 0, currentMove: MoveType.NONE };
     this.roundEndScheduled = false;
     this.overlay.alpha = 0;
     this.overlayText.text = '';
@@ -216,13 +248,10 @@ export class FightScene {
 
       tickPassiveEnergy(this.s1, this.s2, dt);
 
-      const m1 = this.pendingMove1;
-      const m2 = this.pendingMove2;
-      this.pendingMove1 = MoveType.NONE;
-      this.pendingMove2 = MoveType.NONE;
+      if (this.npcProfile && this.npcRng) this.updateNpcInput(dt);
 
-      if (m1 !== MoveType.NONE) this.applyMoveWithVisuals(this.s1, this.s2, this.p1Fighter, this.p2Fighter, m1, 'p1', 'right');
-      if (m2 !== MoveType.NONE) this.applyMoveWithVisuals(this.s2, this.s1, this.p2Fighter, this.p1Fighter, m2, 'p2', 'left');
+      this.tryStartBufferedAction('p1');
+      this.tryStartBufferedAction('p2');
 
       this.hud.update(
         this.s1.hp, this.s2.hp,
@@ -246,6 +275,24 @@ export class FightScene {
     this.bankaiEffect.update(dt, W, H);
   }
 
+  private updateNpcInput(dt: number) {
+    if (!this.npcProfile || !this.npcRng || this.phase !== 'fighting') return;
+    this.npcInputCooldown -= dt;
+    if (this.npcInputCooldown > 0) return;
+
+    const tierDelay = this.npcProfile.tier === 'gold' ? 430 : this.npcProfile.tier === 'silver' ? 620 : 820;
+    const jitter = this.npcRng() * 260;
+    this.npcInputCooldown = tierDelay + jitter;
+    this.queueMove('p2', npcAITick(
+      this.npcProfile,
+      this.s2.hp,
+      this.s2.energy,
+      this.s1.hp,
+      this.s1.energy,
+      this.npcRng,
+    ));
+  }
+
   private updateImpactShake(dt: number) {
     if (this.impactShakeMs <= 0) {
       this.container.x = 0;
@@ -262,6 +309,72 @@ export class FightScene {
   private shake(strength: number, ms = 180) {
     this.impactShakeStrength = Math.max(this.impactShakeStrength, strength);
     this.impactShakeMs = Math.max(this.impactShakeMs, ms);
+  }
+
+
+  // ── Input buffering + action timing ───────────────────────────────────────
+
+  private queueMove(key: FighterKey, move: MoveType) {
+    if (this.phase !== 'fighting' || !canBufferMove(move)) return;
+    const now = performance.now();
+    const runtime = this.actionRuntime[key];
+
+    if (now >= runtime.lockedUntil) {
+      this.startTimedAction(key, move, now);
+      return;
+    }
+
+    runtime.bufferedMove = move;
+    runtime.bufferedAt = now;
+  }
+
+  private tryStartBufferedAction(key: FighterKey) {
+    const now = performance.now();
+    const runtime = this.actionRuntime[key];
+    if (now < runtime.lockedUntil || runtime.bufferedMove === MoveType.NONE) return;
+
+    const age = now - runtime.bufferedAt;
+    const move = runtime.bufferedMove;
+    runtime.bufferedMove = MoveType.NONE;
+    runtime.bufferedAt = 0;
+
+    if (age <= INPUT_BUFFER_MS) this.startTimedAction(key, move, now);
+  }
+
+  private startTimedAction(key: FighterKey, move: MoveType, now: number) {
+    if (this.phase !== 'fighting' || move === MoveType.NONE) return;
+
+    const runtime = this.actionRuntime[key];
+    const timing = MOVE_TIMINGS[move];
+    const fighter = key === 'p1' ? this.p1Fighter : this.p2Fighter;
+    const state = key === 'p1' ? this.s1 : this.s2;
+
+    runtime.currentMove = move;
+    runtime.lockedUntil = now + timing.windupMs + timing.activeMs + timing.recoveryMs;
+    runtime.bufferedMove = MoveType.NONE;
+
+    fighter.animState = moveToAnim(move);
+
+    if (move === MoveType.BLOCK) {
+      state.isBlocking = true;
+      state.blockStart = Date.now();
+      this.after(timing.activeMs, () => {
+        state.isBlocking = false;
+        if (fighter.animState === AnimState.BLOCK && state.hp > 0) fighter.animState = AnimState.IDLE;
+      });
+      this.scheduleAnimReset(key, state, fighter, timing.activeMs + timing.recoveryMs);
+      return;
+    }
+
+    if (move === MoveType.BANKAI && state.energy >= 100) this.shake(3, timing.windupMs);
+
+    this.after(timing.windupMs, () => {
+      if (this.phase !== 'fighting' || state.hp <= 0) return;
+      if (key === 'p1') this.applyMoveWithVisuals(this.s1, this.s2, this.p1Fighter, this.p2Fighter, move, 'p1', 'right');
+      else this.applyMoveWithVisuals(this.s2, this.s1, this.p2Fighter, this.p1Fighter, move, 'p2', 'left');
+    });
+
+    this.scheduleAnimReset(key, state, fighter, timing.windupMs + timing.activeMs + timing.recoveryMs);
   }
 
   // ── Move application with visual feedback ─────────────────────────────────
@@ -282,13 +395,6 @@ export class FightScene {
 
     const result = resolveMove(attacker, defender, move);
     if (result.noop) return;
-
-    // Attacker anim
-    if (move !== MoveType.NONE) {
-      attackerFighter.animState = moveToAnim(move);
-      const resetMs = move === MoveType.BANKAI ? 650 : move === MoveType.BLOCK ? 360 : 320;
-      this.scheduleAnimReset(attackerKey, attacker, attackerFighter, resetMs);
-    }
 
     // Defender hit flash
     if (result.defenderHpDelta < 0 && !result.blocked) {
@@ -330,7 +436,9 @@ export class FightScene {
     let msg = 'DRAW!';
     let color = 0xffd700;
     if (winner === 1) { msg = `${this.ctx.player?.username ?? 'P1'} WINS!`; color = 0x4a90d9; }
-    else if (winner === 2) { msg = 'P2 WINS!'; color = 0xe05050; }
+    else if (winner === 2) { msg = `${this.npcProfile?.name ?? 'P2'} WINS!`; color = this.npcProfile?.outfitColor ?? 0xe05050; }
+
+    if (winner === 1) this.tryGrantNpcReward();
 
     this.overlay.alpha = 0.75;
     this.overlayText.text = msg;
@@ -340,27 +448,97 @@ export class FightScene {
     this.after(1500, () => this.showCardPicker());
   }
 
+  private tryGrantNpcReward() {
+    if (!this.npcProfile || this.npcRewardGranted) return;
+    const playerId = this.ctx.player?.id ?? 'guest';
+    const key = `ahf:npcReward:${playerId}:${this.npcProfile.id}`;
+    if (localStorage.getItem(key) === '1') return;
+    localStorage.setItem(key, '1');
+    this.npcRewardGranted = true;
+    this.overlayText.text = `${this.ctx.player?.username ?? 'P1'} WINS!\nNPC reward unlocked`;
+  }
+
   private showCardPicker() {
     if (this.destroyed) return;
     this.overlay.alpha = 0;
     this.overlayText.text = '';
 
-    const p1Cards = drawRandomCards(3);
-    const p2Cards = drawRandomCards(3);
+    const rewardCards = drawRewardCards(3);
+    const collection = getPlayerCardCollection(this.ctx.player);
 
-    this.cardPicker = new CardPickerUI(
+    this.cardPicker = new CardRewardUI(
       this.ctx.app.screen.width,
       this.ctx.app.screen.height,
-      p1Cards,
-      p2Cards,
-      (_p1Card: CardDefinition, _p2Card: CardDefinition) => {
+      rewardCards,
+      collection,
+      (card: CardDefinition) => {
         if (this.destroyed) return;
-        this.cardPicker?.destroy();
-        this.cardPicker = null;
-        this.after(400, () => this.ctx.switchScene('hub'));
+        void this.claimRewardAndReturn(card);
       },
     );
     this.container.addChild(this.cardPicker.container);
+  }
+
+  private async claimRewardAndReturn(card: CardDefinition) {
+    const result = await claimCardRewardForPlayer(this.ctx.player, card.id);
+    if (this.destroyed) return;
+    this.cardPicker?.destroy();
+    this.cardPicker = null;
+
+    this.overlay.alpha = 0.72;
+    this.overlayText.style.fill = result.duplicate ? 0xffaa44 : 0x7dff9a;
+    (this.overlayText.style as TextStyle).fontSize = 44;
+    this.overlayText.text = result.duplicate
+      ? `Duplicate sold\n+${result.currencyGained} dust`
+      : `${card.name} unlocked`;
+
+    this.after(900, () => this.ctx.switchScene('hub'));
+  }
+
+  private applyActiveCardLoadout() {
+    const collection = getPlayerCardCollection(this.ctx.player);
+    collection.active.forEach(cardId => {
+      const card = getCardById(cardId);
+      if (!card) return;
+      switch (card.effectKey) {
+        case 'speedMult':
+          // Local fight movement timing is mostly animation/input based for now.
+          break;
+        case 'heavyHit':
+          this.s1.attackMult *= card.value;
+          break;
+        case 'attackMult':
+          this.s1.attackMult *= card.value;
+          break;
+        case 'defenseMult':
+          this.s1.defenseMult *= card.value;
+          break;
+        case 'bankaiChargeRateMult':
+          this.s1.bankaiChargeRateMult *= card.value;
+          break;
+        case 'counterOnPerfectBlock':
+          this.s1.counterOnPerfectBlock = true;
+          break;
+        case 'lowAttackSlows':
+          this.s1.lowAttackSlows = true;
+          break;
+        case 'thirdHitKnockback':
+          this.s1.thirdHitKnockback = true;
+          break;
+        case 'bankaiBeamWidthMult':
+          this.s1.bankaiBeamWidthMult *= card.value;
+          break;
+        case 'bankaiActivateFaster':
+          // Timing hook exists in shared card data; combat timing adjustment can be tuned later.
+          break;
+        case 'bankaiLeavesZone':
+          this.s1.bankaiLeavesZone = true;
+          break;
+        case 'lowHpBankaiBoost':
+          // Applied later when Bankai damage gets a dedicated damage modifier hook.
+          break;
+      }
+    });
   }
 
   // ── Cleanup ───────────────────────────────────────────────────────────────

@@ -1,6 +1,6 @@
 import fs from 'fs';
 import path from 'path';
-import { RANK } from '@ahf/shared';
+import { RANK, normalizeCardCollection, type CardCollectionState } from '@ahf/shared';
 
 export interface DbPlayer {
   id: string;
@@ -10,8 +10,14 @@ export interface DbPlayer {
   outfit_color: string;
   aura_color: string;
   character_name: string;
-  current_run_cards: string; // JSON array
+  body_type?: string;
+  weapon_type?: string;
+  outfit_style?: string;
+  hair_color?: string;
+  skin_tone?: string;
+  current_run_cards: string; // legacy JSON array
   fights_in_current_run: number;
+  card_collection?: string; // JSON CardCollectionState
   created_at: number;
   updated_at: number;
 }
@@ -54,8 +60,14 @@ export const playerRepo = {
       outfit_color: '#4a90d9',
       aura_color: '#7b2fff',
       character_name: username,
+      body_type: 'balanced',
+      weapon_type: 'katana',
+      outfit_style: 'gi',
+      hair_color: '#111827',
+      skin_tone: '#ffc99b',
       current_run_cards: '[]',
       fights_in_current_run: 0,
+      card_collection: JSON.stringify(normalizeCardCollection(null)),
       created_at: now,
       updated_at: now,
     };
@@ -80,13 +92,18 @@ export const playerRepo = {
     scheduleSave();
   },
 
-  updateCosmetics(id: string, hairStyle: number, outfitColor: string, auraColor: string, characterName: string) {
+  updateCosmetics(id: string, cosmetics: { hairStyle: number; outfitColor: string; auraColor: string; characterName: string; bodyType?: string; weaponType?: string; outfitStyle?: string; hairColor?: string; skinTone?: string }) {
     const p = data.players.find(p => p.id === id);
     if (!p) return;
-    p.hair_style = hairStyle;
-    p.outfit_color = outfitColor;
-    p.aura_color = auraColor;
-    p.character_name = characterName;
+    p.hair_style = cosmetics.hairStyle;
+    p.outfit_color = cosmetics.outfitColor;
+    p.aura_color = cosmetics.auraColor;
+    p.character_name = cosmetics.characterName;
+    p.body_type = cosmetics.bodyType ?? p.body_type ?? 'balanced';
+    p.weapon_type = cosmetics.weaponType ?? p.weapon_type ?? 'katana';
+    p.outfit_style = cosmetics.outfitStyle ?? p.outfit_style ?? 'gi';
+    p.hair_color = cosmetics.hairColor ?? p.hair_color ?? '#111827';
+    p.skin_tone = cosmetics.skinTone ?? p.skin_tone ?? '#ffc99b';
     p.updated_at = Date.now();
     scheduleSave();
   },
@@ -98,6 +115,24 @@ export const playerRepo = {
     p.fights_in_current_run = fightsInRun;
     p.updated_at = Date.now();
     scheduleSave();
+  },
+
+  updateCardCollection(id: string, collection: CardCollectionState) {
+    const p = data.players.find(p => p.id === id);
+    if (!p) return;
+    p.card_collection = JSON.stringify(normalizeCardCollection(collection));
+    p.updated_at = Date.now();
+    scheduleSave();
+  },
+
+  getCardCollection(id: string): CardCollectionState {
+    const p = data.players.find(p => p.id === id);
+    if (!p) return normalizeCardCollection(null);
+    try {
+      return normalizeCardCollection(p.card_collection ? JSON.parse(p.card_collection) : null);
+    } catch {
+      return normalizeCardCollection(null);
+    }
   },
 
   getLeaderboard(limit = 10): DbPlayer[] {

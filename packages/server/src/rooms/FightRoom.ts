@@ -16,6 +16,15 @@ import { FightPhase as FP } from '@ahf/shared';
 const TICK_MS = 1000 / TICK_RATE;
 const IDLE_RESET_MS = 300;
 
+const SERVER_MOVE_TIMINGS: Record<MoveType, { windupMs: number; activeMs: number; recoveryMs: number }> = {
+  [MoveType.NONE]: { windupMs: 0, activeMs: 0, recoveryMs: 0 },
+  [MoveType.ATTACK]: { windupMs: 120, activeMs: 90, recoveryMs: 190 },
+  [MoveType.HIGH_ATTACK]: { windupMs: 210, activeMs: 110, recoveryMs: 290 },
+  [MoveType.LOW_ATTACK]: { windupMs: 170, activeMs: 100, recoveryMs: 250 },
+  [MoveType.BLOCK]: { windupMs: 0, activeMs: 260, recoveryMs: 140 },
+  [MoveType.BANKAI]: { windupMs: 360, activeMs: 220, recoveryMs: 520 },
+};
+
 interface PlayerSession {
   client: Client;
   playerId: string;
@@ -23,6 +32,8 @@ interface PlayerSession {
   lastMove: MoveType;
   lastMoveTick: number;
   blockWindowStart: number;
+  actionLockedUntil: number;
+  blockActiveUntil: number;
 }
 
 export class FightRoom extends Room<FightRoomState> {
@@ -46,10 +57,18 @@ export class FightRoom extends Room<FightRoomState> {
     this.onMessage('input', (client: Client, msg: { move: MoveType }) => {
       const session = this.sessions.get(client.sessionId);
       if (!session || this.state.phase !== FP.FIGHTING) return;
+      if (!msg.move || msg.move === MoveType.NONE) return;
+
+      const now = Date.now();
+      if (now < session.actionLockedUntil) return;
+
+      const timing = SERVER_MOVE_TIMINGS[msg.move];
+      session.actionLockedUntil = now + timing.windupMs + timing.activeMs + timing.recoveryMs;
       session.lastMove = msg.move;
       session.lastMoveTick = this.tick;
       if (msg.move === MoveType.BLOCK) {
-        session.blockWindowStart = Date.now();
+        session.blockWindowStart = now;
+        session.blockActiveUntil = now + timing.activeMs;
       }
     });
 
@@ -69,6 +88,8 @@ export class FightRoom extends Room<FightRoomState> {
       lastMove: MoveType.NONE,
       lastMoveTick: -1,
       blockWindowStart: 0,
+      actionLockedUntil: 0,
+      blockActiveUntil: 0,
     };
     this.sessions.set(client.sessionId, session);
 
@@ -113,6 +134,9 @@ export class FightRoom extends Room<FightRoomState> {
     this.sessions.forEach(s => {
       s.lastMove = MoveType.NONE;
       s.lastMoveTick = -1;
+      s.actionLockedUntil = 0;
+      s.blockActiveUntil = 0;
+      s.blockWindowStart = 0;
     });
   }
 
@@ -204,13 +228,13 @@ export class FightRoom extends Room<FightRoomState> {
   }
 
   private checkBlock(defender: FighterState, defenderSess: PlayerSession, move: MoveType): boolean {
-    if (defenderSess.lastMove !== MoveType.BLOCK) return false;
+    if (Date.now() > defenderSess.blockActiveUntil) return false;
     if (move === MoveType.HIGH_ATTACK || move === MoveType.BANKAI) return false;
     return true;
   }
 
   private isPerfectBlock(sess: PlayerSession): boolean {
-    return Date.now() - sess.blockWindowStart < 200;
+    return Date.now() - sess.blockWindowStart < 160;
   }
 
   private dealDamage(defender: FighterState, _attacker: FighterState, amount: number) {

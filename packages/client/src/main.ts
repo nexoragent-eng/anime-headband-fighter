@@ -3,6 +3,7 @@ import { LoginScene } from './scenes/LoginScene';
 import { HubScene } from './scenes/HubScene';
 import { FightScene } from './scenes/FightScene';
 import { LockerRoomScene } from './scenes/LockerRoomScene';
+import { CharacterSprite } from './game/CharacterSprite';
 import type { PlayerProfile } from '@ahf/shared';
 
 declare const __SERVER_URL__: string;
@@ -28,6 +29,9 @@ async function main() {
     autoDensity: true,
   });
   document.getElementById('app')!.appendChild(app.canvas);
+
+  // Start loading Spine assets immediately (cached for all scenes)
+  CharacterSprite.preload().catch(console.error);
 
   const ctx: GameContext = {
     app,
