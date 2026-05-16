@@ -6,8 +6,8 @@ services:
       context: .
       dockerfile: packages/server/Dockerfile
     restart: unless-stopped
-    ports:
-      - "2567:2567"
+    expose:
+      - "2567"
     environment:
       - NODE_ENV=production
       - PORT=2567
@@ -27,6 +27,8 @@ services:
       args:
         - VITE_SERVER_URL=wss://api.anime.futuredays.nl
     restart: unless-stopped
+    expose:
+      - "80"
     depends_on:
       - server
 
