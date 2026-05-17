@@ -190,7 +190,7 @@ export function npcAITick(
   npc: NPCProfile,
   npcHp: number,
   npcEnergy: number,
-  opponentHp: number,
+  _opponentHp: number,
   _opponentEnergy: number,
   rng: () => number,
 ): MoveType {
